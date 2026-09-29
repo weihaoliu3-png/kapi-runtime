@@ -1,0 +1,59 @@
+name: build-runtime
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: universal-apple-darwin
+            out: Kapi-mac
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            out: Kapi-win
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Locate project (repo root or capapet-runtime/)
+        shell: bash
+        run: |
+          if [ -f package.json ]; then DIR=.; elif [ -f kapi-runtime/package.json ]; then DIR=kapi-runtime; elif [ -f nimbi-runtime/package.json ]; then DIR=nimbi-runtime; elif [ -f mochi-runtime/package.json ]; then DIR=mochi-runtime; elif [ -f capapet-runtime/package.json ]; then DIR=capapet-runtime; else echo "package.json not found" && exit 1; fi
+          echo "DIR=$DIR" >> "$GITHUB_ENV"; echo "project dir: $DIR"
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: swatinem/rust-cache@v2
+        with: { workspaces: "${{ env.DIR }}/src-tauri" }
+      - name: Install, icons, unit tests
+        shell: bash
+        run: cd "$DIR" && npm install && npm run icon && node test/engine.test.mjs && node test/care.test.mjs && node test/behaviors.test.mjs && node test/connect.test.mjs
+      - name: Build
+        shell: bash
+        run: cd "$DIR" && npm run tauri build -- --target ${{ matrix.target }}
+      - name: Package (mac)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          cd "$DIR"
+          APP=$(find src-tauri/target -name "Kapi.app" -path "*release/bundle/macos*" | head -1)
+          mkdir -p out && cp -R "$APP" out/ && cd out && zip -qry "$GITHUB_WORKSPACE/${{ matrix.out }}.zip" Kapi.app
+      - name: Package (win)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Set-Location $env:DIR
+          $exe = Get-ChildItem -Recurse src-tauri/target -Filter Kapi.exe | Where-Object { $_.FullName -match 'release\\Kapi.exe$' } | Select-Object -First 1
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item $exe.FullName out/
+          Compress-Archive -Path out/* -DestinationPath "$env:GITHUB_WORKSPACE/${{ matrix.out }}.zip" -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.out }}
+          path: ${{ matrix.out }}.zip
