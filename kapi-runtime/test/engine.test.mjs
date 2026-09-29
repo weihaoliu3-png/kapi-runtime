@@ -1,0 +1,72 @@
+// Runs the engine headless with fake images to check the state machine, look-follow and keyframe sequencing.
+import { readFileSync } from 'node:fs';
+import assert from 'node:assert/strict';
+globalThis.performance = globalThis.performance || { now: () => Date.now() };
+const src = readFileSync(new URL('../src/engine.js', import.meta.url), 'utf8');
+new Function(src)(); // defines globalThis.PetEngine
+const { PetEngine, PET_PRIORITY } = globalThis;
+
+let clock = 0; const now = () => clock;
+const img = (n) => ({ name: n });
+const manifest = {
+  schema: 2, render: { canvas: [512, 640], anchor: [256, 620] }, source: { cropped: false },
+  lookFollow: { mode: 'frames8', deadzonePx: 60, holdMs: 250, crossfadeMs: 120 },
+  actions: {
+    idle: { type: 'procedural', preset: 'breathe' }, drag: { type: 'procedural', preset: 'sway' }, drop: { type: 'procedural', preset: 'bounce' }, nod: { type: 'procedural', preset: 'nod' },
+    wave: { type: 'frames', dir: 'actions/wave', frames: 4, fps: 5, sequence: [0, 1, 2, 3, 2, 3, 1, 0], tweenMs: 120, loops: 1 },
+    sleep: { type: 'frames', dir: 'actions/sleep', frames: 4, fps: 2, sequence: [0, 1, 2, 3], holdLast: true, wake: [3, 2, 1, 0], loops: 1 },
+  },
+  triggers: { click: { action: 'nod', say: 'click' }, dragStart: { action: 'drag', say: 'dragStart' }, dragEnd: { action: 'drop', say: 'dragEnd' },
+    idleRandom: [{ action: 'wave', weight: 1, cooldownSec: 0 }], idleRandomEverySec: [1, 1], afterIdleMin: { minutes: 1, action: 'sleep' } },
+};
+const persona = { lines: { click: ['嗯？'], dragStart: ['喂'], dragEnd: ['哼'] } };
+const images = { base: img('base'), blink: img('blink'), look: Object.fromEntries(['d000','d045','d090','d135','d180','d225','d270','d315'].map(d => [d, img(d)])),
+  actions: { wave: [0,1,2,3].map(i => img('wave' + i)), sleep: [0,1,2,3].map(i => img('sleep' + i)) } };
+const said = [];
+const e = new PetEngine({ manifest, persona, images }, { now, onSay: (t) => said.push(t) });
+e.hover = true; // suppress idle-random while testing deterministic paths
+
+// look-follow: cursor to the screen-right -> d090
+e.setLookVector(300, 0); assert.equal(e.look.current, 'd090');
+clock += 0.3; e.setLookVector(0, -300); assert.equal(e.look.current, 'd000', 'up = d000');
+clock += 0.3; e.setLookVector(-300, 300); assert.equal(e.look.current, 'd225', 'down-left = d225');
+clock += 0.3; e.setLookVector(10, 10); assert.equal(e.look.current, 'base', 'deadzone -> base');
+// hold: rapid change within holdMs is ignored
+clock += 0.3; e.setLookVector(300, 0); clock += 0.05; e.setLookVector(-300, 0); assert.equal(e.look.current, 'd090');
+
+// click -> nod + line
+clock += 1; e.click(0.3); assert.equal(e.state.action, 'nod'); assert.equal(said.at(-1), '嗯？');
+for (let i = 0; i < 60; i++) { clock += 0.05; e.update(); }
+assert.equal(e.state.action, 'idle', 'nod finishes');
+
+// wave sequence walks all 8 steps then returns to idle
+e.play('wave'); const seen = [];
+for (let i = 0; i < 60; i++) { clock += 0.1; e.update(); const f = e.frame(); seen.push(f.layers.at(-1).img.name); if (e.state.action === 'idle') break; }
+assert.deepEqual([...new Set(seen)].filter(n => n.startsWith('wave')), ['wave0', 'wave1', 'wave2', 'wave3']);
+assert.equal(e.state.action, 'idle');
+
+// drag has top priority and blocks random
+e.dragStart(); assert.equal(e.state.action, 'drag'); assert.equal(said.at(-1), '喂');
+clock += 5; e.update(); assert.equal(e.state.action, 'drag', 'random cannot interrupt drag');
+e.dragEnd(); assert.equal(e.state.action, 'drop');
+for (let i = 0; i < 30; i++) { clock += 0.05; e.update(); }
+assert.equal(e.state.action, 'idle');
+
+// afterIdleMin -> sleep with holdLast, then click wakes via wake sequence
+clock += 61; e.hover = false; e.update(); assert.equal(e.state.action, 'sleep');
+for (let i = 0; i < 40; i++) { clock += 0.6; e.update(); }
+assert.equal(e.state.action, 'sleep', 'holdLast keeps sleeping'); assert.equal(e.frame().layers.at(-1).img.name, 'sleep3');
+e.click(0.3); assert.equal(e.state.waking, true); e.hover = true;
+for (let i = 0; i < 20; i++) { clock += 0.6; e.update(); }
+assert.equal(e.state.action, 'idle', 'wake sequence returns to idle');
+
+// crossfade produces two layers right after a look change
+clock += 1; e.setLookVector(0, 0); clock += 0.3; e.setLookVector(300, 0); clock += 0.03; const f = e.frame();
+assert.equal(f.layers.length, 2, 'crossfade layers'); assert.ok(f.layers[0].alpha < 1 && f.layers[1].alpha < 1);
+console.log('engine tests passed');
+// keyframe tween persists across several render frames
+{ let clock2 = 1000; const e2 = new PetEngine({ manifest, persona, images }, { now: () => clock2 }); e2.hover = true;
+  e2.play('wave'); e2.frame(); clock2 += 0.2; e2.update(); e2.frame(); // step to key 1 at fps 5
+  clock2 += 0.03; const a = e2.frame(); clock2 += 0.03; const b = e2.frame(); clock2 += 0.2; const c = e2.frame();
+  assert.equal(a.layers.length, 2); assert.equal(b.layers.length, 2); assert.ok(b.layers[1].alpha > a.layers[1].alpha);
+  console.log('tween ok, expired layers =', c.layers.length); }

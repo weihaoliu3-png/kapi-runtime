@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Kapi</title>
+<style>
+  html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: transparent; overflow: hidden;
+               font-family: -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; user-select: none; }
+  #stage { position: absolute; left: 0; top: 0; }
+  #bubble { position: absolute; max-width: 240px; padding: 8px 12px; border-radius: 14px; background: rgba(40,38,36,.92);
+            color: #f6f2ec; font-size: 13px; line-height: 1.4; display: none; transform: translateX(-50%); white-space: pre-wrap;
+            box-shadow: 0 4px 14px rgba(0,0,0,.25); }
+  #bubble::after { content: ""; position: absolute; left: 50%; bottom: -7px; transform: translateX(-50%);
+                   border: 7px solid transparent; border-bottom: 0; border-top-color: rgba(40,38,36,.92); }
+  #bubble.sticky { cursor: pointer; }
+  #bubble.sticky::before { content: "点击关闭"; display: block; font-size: 10px; opacity: .6; margin-bottom: 2px; }
+  #chat { position: absolute; left: 50%; transform: translateX(-50%); width: 240px; display: none; }
+  #chat input { width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 12px; border: 1px solid #d1775a; outline: none;
+                font-size: 13px; background: rgba(255,255,255,.96); }
+  #paw { position: absolute; left: 6px; top: 6px; width: 30px; height: 30px; border-radius: 50%; background: rgba(255,255,255,.92); border: 1px solid #e6dccf;
+         display: none; align-items: center; justify-content: center; font-size: 16px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+  #care { position: absolute; left: 50%; top: 6px; transform: translateX(-50%); width: 236px; background: rgba(255,252,247,.97); border: 1px solid #e6dccf; border-radius: 14px;
+          padding: 10px 12px; font-size: 12px; color: #2c2b29; display: none; box-shadow: 0 6px 20px rgba(0,0,0,.2); }
+  #care .hd { font-weight: 600; font-size: 13px; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+  #care .hd small { font-weight: 400; color: #7e7972; flex: 1; }
+  #care .hd .x { cursor: pointer; padding: 0 4px; color: #999; }
+  #care .row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+  #care .row span { width: 28px; color: #7e7972; }
+  #care .row b { width: 22px; text-align: right; font-weight: 500; }
+  #care .bar { flex: 1; height: 7px; background: #eee6da; border-radius: 4px; overflow: hidden; }
+  #care .bar i { display: block; height: 100%; background: #d1775a; border-radius: 4px; }
+  #care .bar i.low { background: #c9413a; }
+  #care .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+  #care button { padding: 6px 0; border: 0; border-radius: 8px; background: #f2e8dc; font-size: 12px; cursor: pointer; }
+  #care button:disabled { opacity: .45; cursor: default; }
+  #care .tk { margin-top: 8px; color: #7e7972; }
+  #toast { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); background: rgba(209,119,90,.95); color: #fff;
+           padding: 6px 10px; border-radius: 10px; font-size: 12px; display: none; white-space: nowrap; }
+</style>
+</head>
+<body>
+  <canvas id="stage"></canvas>
+  <div id="bubble"></div>
+  <div id="chat"><input id="chatInput" placeholder=""></div>
+  <div id="toast"></div>
+  <div id="paw" title="照顾">🐾</div>
+  <div id="care"></div>
+  <script src="i18n.js"></script>
+  <script src="engine.js"></script>
+  <script src="care.js"></script>
+  <script src="behaviors.js"></script>
+  <script src="connect.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>
