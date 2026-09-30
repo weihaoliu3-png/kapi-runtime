@@ -75,7 +75,7 @@ fn read_file_b64(path: String) -> Result<String, String> {
     use base64::Engine;
     let bytes = fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
     let mime = match PathBuf::from(&path).extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
-        Some("png") => "image/png", Some("webp") => "image/webp", Some("jpg") | Some("jpeg") => "image/jpeg", Some("gif") => "image/gif", _ => "application/octet-stream",
+        Some("png") => "image/png", Some("webp") => "image/webp", Some("jpg") | Some("jpeg") => "image/jpeg", Some("gif") => "image/gif", Some("mp3") => "audio/mpeg", Some("wav") => "audio/wav", Some("ogg") => "audio/ogg", _ => "application/octet-stream",
     };
     Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
 }

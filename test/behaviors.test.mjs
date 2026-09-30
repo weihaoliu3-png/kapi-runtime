@@ -37,3 +37,11 @@ clock += 5; b.step(1 / 30); assert.equal(b.mode, 'walk');
 b.onBattery({ percent: 15, charging: false }); const n = said.length; b.onBattery({ percent: 15, charging: false }); assert.equal(said.length, n, 'low battery once per 15 min');
 b.onOtherPet('x', { x: win.x + 10, w: 300 }, 'Bo'); assert.ok(said.at(-1).includes('Bo'));
 console.log('behaviors tests passed');
+// follow mode: approaches the cursor, stops near it, faces direction
+{ const w2 = { x: 100, y: 100, w: 360, h: 480 }; let cur = { x: 900, y: 500 };
+  const b2 = new Behaviors({ getWin: () => w2, getMonitor: () => mon, getCursor: () => cur, engine: { hover: false, sleeping: false, state: { action: 'idle' } }, say: () => {}, expr: () => {}, play: () => {}, line: () => null, t: () => I18N.pick('en') });
+  b2.setFollow(true);
+  for (let i = 0; i < 300; i++) { const r = b2.step(1 / 30); if (!r) break; w2.x = r.x; w2.y = r.y; }
+  assert.ok(Math.abs(w2.x - 940) < 30 && Math.abs(w2.y - (500 - 480 * 0.35)) < 30, 'settled below-right of cursor'); assert.equal(b2.flip, false);
+  cur = { x: 200, y: 300 }; const r = b2.step(1 / 30); assert.ok(r && r.flip === true, 'faces left when cursor moves left');
+  b2.setFollow(false); assert.equal(b2.step(1 / 30), null, 'no motion after unfollow'); console.log('follow ok'); }

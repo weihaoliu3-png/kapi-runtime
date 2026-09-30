@@ -84,6 +84,7 @@
     }
     pet = { ...info, manifest, persona };
     T = I18N.pick(persona.language); chatInput.placeholder = T.chatPlaceholder;
+    await loadVoiceIndex(); pickedVoice = null;
     engine = new PetEngine({ manifest, persona, images }, {
       onSay: (text, sticky) => say(text, sticky),
       onAction: () => {},
@@ -107,7 +108,8 @@
     const stateFile = join(pet.dir, 'state.json');
     let st = null; try { st = JSON.parse(await invoke('read_text', { path: stateFile })); } catch (_) {}
     care = new CareSystem(st, {
-      say: (t, sticky) => say(t, sticky), expr: (n, ms) => engine.showExpression(n, ms), play: (id) => { if (pet.manifest.actions[id]) engine.play(id); else engine.play('nod'); },
+      say: (t, sticky) => say(t, sticky), expr: (n, ms) => engine.showExpression(n, ms),
+      play: (id) => { if (!pet.manifest.actions[id] && (id === 'eat' || id === 'drink')) pet.manifest.actions[id] = { type: 'procedural', preset: id }; if (pet.manifest.actions[id]) engine.play(id); else engine.play('nod'); },
       setSleeping: (on) => engine.setSleeping(on), setStageScale: async (k) => { stageScale = k; await applyScale(); }, toast: (m) => toast(m, 4000),
       save: (state) => invoke('write_text', { path: stateFile, content: JSON.stringify(state) }).catch(() => {}), t,
       line: (key) => { const L = (pet.persona.lines || {})[key]; return L && L.length ? L[Math.floor(Math.random() * L.length)] : null; },
@@ -269,10 +271,32 @@
     bubble.style.left = cx + 'px'; bubble.style.top = Math.max(4, PAD_TOP - bubble.offsetHeight - 14) + 'px';
     chat.style.top = Math.max(4, PAD_TOP - 48) + 'px';
   }
-  function speak(text) {
-    if (settings.muted || !('speechSynthesis' in window)) return;
-    try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = (pet.persona.language || 'zh-CN'); u.rate = 1.05; speechSynthesis.speak(u); } catch (_) {}
+  let voiceIndex = {}, currentAudio = null, pickedVoice = null;
+  async function loadVoiceIndex() {
+    voiceIndex = {};
+    try { voiceIndex = JSON.parse(await invoke('read_text', { path: join(pet.dir, 'voice', 'index.json') })); } catch (_) {}
   }
+  function bestSystemVoice(lang) {
+    if (!('speechSynthesis' in window)) return null;
+    const voices = speechSynthesis.getVoices() || []; const l = (lang || 'zh-CN').toLowerCase(); const base = l.split('-')[0];
+    const score = (v) => { const n = (v.name || '').toLowerCase(); let s = 0; if ((v.lang || '').toLowerCase() === l) s += 6; else if ((v.lang || '').toLowerCase().startsWith(base)) s += 3;
+      if (/natural|online|neural/.test(n)) s += 5; if (/xiaoxiao|xiaoyi|yunxi|siri|premium|enhanced|samantha|ava|google/.test(n)) s += 3; if (/huihui|kangkang|david|zira/.test(n)) s -= 2; return s; };
+    return voices.slice().sort((a, b) => score(b) - score(a))[0] || null;
+  }
+  async function speak(text) {
+    if (settings.muted || !text) return;
+    const rel = voiceIndex[text];
+    if (rel) {
+      try { const src = await invoke('read_file_b64', { path: join(pet.dir, rel) }); if (currentAudio) { currentAudio.pause(); } currentAudio = new Audio(src); currentAudio.volume = 0.9; await currentAudio.play(); return; } catch (_) {}
+    }
+    if (!('speechSynthesis' in window)) return;
+    try {
+      speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = (pet.persona.language || 'zh-CN');
+      if (!pickedVoice) pickedVoice = bestSystemVoice(u.lang); if (pickedVoice) u.voice = pickedVoice;
+      u.rate = 1.05; u.pitch = 1.1; speechSynthesis.speak(u);
+    } catch (_) {}
+  }
+  if ('speechSynthesis' in window) speechSynthesis.onvoiceschanged = () => { pickedVoice = null; };
   function greet() {
     const h = new Date().getHours(); const k = h < 12 ? 'greetingMorning' : h >= 21 ? 'greetingEvening' : null;
     if (k && (pet.persona.lines || {})[k]) setTimeout(() => engine.sayFrom(k), 1200);
@@ -367,6 +391,7 @@
       await CheckMenuItem.new({ text: T.menu.mute, checked: settings.muted, action: async () => { settings.muted = !settings.muted; await saveSettings(); } }),
       await CheckMenuItem.new({ text: T.menu.onTop, checked: settings.alwaysOnTop, action: async () => { settings.alwaysOnTop = !settings.alwaysOnTop; await win.setAlwaysOnTop(settings.alwaysOnTop); await saveSettings(); } }),
       await PredefinedMenuItem.new({ item: 'Separator' }),
+      await CheckMenuItem.new({ text: beh && beh.follow ? T.menu2.unfollow : T.menu2.follow, checked: !!(beh && beh.follow), action: () => beh && beh.setFollow(!beh.follow) }),
       await MenuItem.new({ text: T.menu2.come, action: () => beh && beh.comeHere() }),
       await MenuItem.new({ text: T.menu2.hide, action: () => beh && beh.peek() }),
       await CheckMenuItem.new({ text: T.menu2.perch, checked: !!(beh && beh.mode === 'perch'), action: () => beh && beh.setPerch(beh.mode !== 'perch') }),

@@ -70,7 +70,7 @@
       st.lastCare[kind] = Date.now();
       this._gainXp(c.xp, kind);
       if (c.expr) this.host.expr(c.expr, 2000);
-      this.host.play(kind === 'feed' ? 'happy' : 'nod');
+      this.host.play(kind === 'feed' ? 'eat' : kind === 'water' ? 'drink' : 'nod');
       this.host.say(this.host.line(c.say) || T.fallback[c.say]);
       this.host.save(st); return true;
     }

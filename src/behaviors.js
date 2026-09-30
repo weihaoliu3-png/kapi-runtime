@@ -41,6 +41,20 @@
     comeHere() { const c = this.h.getCursor(), w = this.h.getWin(); if (!c || !w) return; this.walkTo(c.x - w.w / 2, w.y); this.h.say(this.h.line('comeHere') || this.h.t().beh.coming); }
     wander() { const w = this.h.getWin(), m = this.h.getMonitor(); if (!w || !m) return; const dx = (Math.random() < 0.5 ? -1 : 1) * (80 + Math.random() * 160); this.walkTo(Math.min(Math.max(w.x + dx, m.x), m.x + m.w - w.w), w.y); }
 
+    // ---------- follow the cursor ----------
+    setFollow(on) { this.follow = !!on; if (on) { this.mode = 'idle'; this.target = null; this.h.say(this.h.line('follow') || this.h.t().beh.follow); } else if (this.mode === 'walk' && this._followTarget) { this.mode = 'idle'; this.target = null; } this._followTarget = false; }
+    _followStep(dt) {
+      const c = this.h.getCursor(), w = this.h.getWin(), m = this.h.getMonitor(); if (!c || !w || !m) return null;
+      // keep the pet just below-right of the cursor so it never covers what the user is pointing at
+      const tx = Math.min(Math.max(c.x + 40, m.x), m.x + m.w - w.w), ty = Math.min(Math.max(c.y - w.h * 0.35, m.y), m.y + m.h - w.h);
+      const dx = tx - w.x, dy = ty - w.y, dist = Math.hypot(dx, dy);
+      if (dist < 24) { this._followTarget = false; return null; }
+      const speed = Math.min(420, 90 + dist * 1.2) * dt;                 // faster when far, gentle when close
+      this.flip = dx < 0; this._followTarget = true;
+      const bob = Math.sin(performance.now() / 90) * 3;
+      return { x: w.x + dx / dist * Math.min(speed, dist), y: w.y + dy / dist * Math.min(speed, dist) + bob, rot: 0, flip: this.flip, walking: true };
+    }
+
     // ---------- perch on active window ----------
     setPerch(on) { this.mode = on ? 'perch' : 'idle'; this.lastPerchRect = null; if (on) this.h.say(this.h.line('perch') || this.h.t().beh.perch); }
     perchOn(rect, petFootY, petW) {
@@ -70,6 +84,7 @@
     // ---------- per-frame motion; returns {x,y,rot,flip} or null when nothing to move ----------
     step(dt) {
       const w = this.h.getWin(), m = this.h.getMonitor(); if (!w || !m) return null;
+      if (this.follow && this.mode === 'idle' && !this.h.engine.hover && !this.h.engine.sleeping) { const r = this._followStep(dt); if (r) return r; }
       if (this.mode === 'fly') {
         this.v.y += GRAVITY * dt; let x = w.x + this.v.x * dt, y = w.y + this.v.y * dt;
         const floor = m.y + m.h - w.h + 0; let bounced = false;

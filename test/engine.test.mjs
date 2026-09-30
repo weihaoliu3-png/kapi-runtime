@@ -62,11 +62,18 @@ assert.equal(e.state.action, 'idle', 'wake sequence returns to idle');
 
 // crossfade produces two layers right after a look change
 clock += 1; e.setLookVector(0, 0); clock += 0.3; e.setLookVector(300, 0); clock += 0.03; const f = e.frame();
-assert.equal(f.layers.length, 2, 'crossfade layers'); assert.ok(f.layers[0].alpha < 1 && f.layers[1].alpha < 1);
+assert.equal(f.layers.length, 2, 'crossfade layers'); assert.ok(f.layers[0].alpha === 1 && f.layers[1].alpha < 1, 'old frame opaque, new fades in');
 console.log('engine tests passed');
 // keyframe tween persists across several render frames
 { let clock2 = 1000; const e2 = new PetEngine({ manifest, persona, images }, { now: () => clock2 }); e2.hover = true;
   e2.play('wave'); e2.frame(); clock2 += 0.2; e2.update(); e2.frame(); // step to key 1 at fps 5
   clock2 += 0.03; const a = e2.frame(); clock2 += 0.03; const b = e2.frame(); clock2 += 0.2; const c = e2.frame();
-  assert.equal(a.layers.length, 2); assert.equal(b.layers.length, 2); assert.ok(b.layers[1].alpha > a.layers[1].alpha);
+  assert.equal(a.layers.length, 2); assert.equal(b.layers.length, 2); assert.ok(b.layers[1].alpha > a.layers[1].alpha && a.layers[0].alpha === 1);
   console.log('tween ok, expired layers =', c.layers.length); }
+// care fallbacks: eat overlay moves toward the mouth then finishes; sleeping slumps and shows z's
+{ let c3 = 5000; const m3 = JSON.parse(JSON.stringify(manifest)); delete m3.actions.sleep; delete m3.triggers.afterIdleMin;
+  const e3 = new PetEngine({ manifest: m3, persona, images }, { now: () => c3 }); e3.hover = true;
+  e3.m.actions.eat = { type: 'procedural', preset: 'eat' }; e3.play('eat'); c3 += 0.2; let f = e3.frame(); assert.ok(f.overlay && f.overlay.icon === '🍙' && f.overlay.at < 0.5);
+  for (let i = 0; i < 40; i++) { c3 += 0.1; e3.update(); } assert.equal(e3.state.action, 'idle', 'eat finishes');
+  e3.setSleeping(true); assert.equal(e3.state.action, 'slump'); c3 += 1; f = e3.frame(); assert.ok(f.zzz && f.dy > 10, 'slumped with z');
+  c3 += 100; e3.update(); assert.equal(e3.state.action, 'slump', 'stays asleep'); e3.setSleeping(false); assert.equal(e3.state.action, 'idle'); console.log('care fallback anims ok'); }

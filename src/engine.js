@@ -12,6 +12,12 @@
     jump:    (t) => { const p = Math.min(1, t / 0.6); return { dy: -40 * Math.sin(p * Math.PI), done: p >= 1 }; },
     wiggle:  (t) => { const p = Math.min(1, t / 0.8); return { rot: 4 * Math.sin(p * Math.PI * 6), done: p >= 1 }; },
     typing:  (t) => { const p = Math.min(1, t / 0.5); return { dy: 3 * Math.abs(Math.sin(p * Math.PI * 2)), done: p >= 1 }; },
+    // care fallbacks (used only when the pet has no eat / drink / sleep frames)
+    eat:     (t) => { const D = 2.6; const p = Math.min(1, t / D); const chew = t > 1.1 && t < 2.2 ? 4 * Math.abs(Math.sin((t - 1.1) * Math.PI * 4)) : 0;
+                      return { dy: chew, overlay: { icon: '🍙', from: [-0.35, 0.55], to: [0.08, 0.28], at: Math.min(1, t / 1.0), hide: t > 2.2 }, done: p >= 1 }; },
+    drink:   (t) => { const D = 2.6; const p = Math.min(1, t / D); const tilt = t > 1.0 && t < 2.1 ? -6 : 0;
+                      return { rot: tilt, overlay: { icon: '💧', from: [0.3, 0.55], to: [0.06, 0.26], at: Math.min(1, t / 1.0), hide: t > 2.1 }, done: p >= 1 }; },
+    slump:   (t) => ({ dy: 14 * Math.min(1, t / 0.8), rot: -6 * Math.min(1, t / 0.8), zzz: true }),
   };
   const DIRS = ['d000', 'd045', 'd090', 'd135', 'd180', 'd225', 'd270', 'd315'];
   const PRIORITY = { drag: 100, user: 80, chat: 60, sleep: 40, random: 20, idle: 0 };
@@ -45,6 +51,8 @@
       const lf = this.m.lookFollow || {}; if (lf.mode !== 'frames8') return;
       if (this.sleeping) return;
       const len = Math.hypot(dx, dy); let target = 'base';
+      const rr = lf.radiusPx || 600;
+      this.lookVec = { x: Math.max(-1, Math.min(1, dx / rr)), y: Math.max(-1, Math.min(1, dy / rr)) };
       const dz = lf.deadzonePx || 60;
       // hysteresis on the deadzone: need to go 25% beyond to leave base, 25% inside to return
       const leavingBase = this.look.current === 'base' ? len >= dz * 1.25 : len >= dz * 0.75;
@@ -113,7 +121,11 @@
     showExpression(name, ms) { if (this.img.expressions && this.img.expressions[name]) { this.expr = { name, until: this.now() + (ms || 1500) / 1000 }; } }
     setSleeping(on) {
       this.sleeping = !!on;
-      if (on) { const id = this.m.actions.sleep ? 'sleep' : null; if (id) this.play(id, PRIORITY.sleep); else this._toIdle(); this.look.current = this.look.target = 'base'; }
+      if (on) {
+        if (!this.m.actions.slump) this.m.actions.slump = { type: 'procedural', preset: 'slump' };
+        const id = this.m.actions.sleep && this.m.actions.sleep.type === 'frames' ? 'sleep' : 'slump';
+        this.play(id, PRIORITY.sleep); this.look.current = this.look.target = 'base';
+      }
       else { this._wake(); if (this.state.action === 'idle') this._toIdle(); }
     }
     chatWait() { this.trigger('chatWait'); }
@@ -160,6 +172,7 @@
     _toIdle() { this.transitionFrom = this._currentImage(); this.transitionT0 = this.now(); this.state = { action: 'idle', prio: PRIORITY.idle, t0: this.now(), seqIdx: 0, frameT0: this.now(), loopsDone: 0, waking: false }; }
     _wake() {
       const a = this.m.actions[this.state.action];
+      if (a && a.type === 'procedural' && a.preset === 'slump') { this._toIdle(); return true; }
       if (a && a.type === 'frames' && a.holdLast && !this.state.waking) {
         if (a.wake && a.wake.length) { this.state.waking = true; this.state.seqIdx = 0; this.state.frameT0 = this.now(); }
         else this._toIdle();
@@ -205,7 +218,8 @@
         if (k >= 1 || !c.img) { if (c.kind === 'look') this.look.fadeFrom = null; if (c.kind === 'trans') this.transitionFrom = null; if (c.kind === 'key') this._keyFade = null; continue; }
         if (!best || c.t0 > best.t0) best = { ...c, k };
       }
-      if (best && best.img !== cur) { layers[0].alpha = best.k; layers.unshift({ img: best.img, alpha: 1 - best.k }); }
+      // old frame stays fully opaque underneath; only the new frame fades in — overlapping pixels never dip below 100%
+      if (best && best.img !== cur) { layers[0].alpha = best.k; layers.unshift({ img: best.img, alpha: 1 }); }
       this._lastKeyImg = a.type === 'frames' ? cur : null;
       // procedural transform
       let tf = { sx: 1, sy: 1, dx: 0, dy: 0, rot: 0 };
@@ -213,7 +227,14 @@
         const f = PROCEDURAL[a.preset]; if (f) Object.assign(tf, f(t - s.t0, this.drag));
         if (s.action === 'idle') Object.assign(tf, PROCEDURAL.breathe(t));
       }
+      // continuous micro-parallax toward the cursor (whole sprite, so no seams): keeps "tracking" alive between frame switches
+      if (s.action === 'idle' && !this.sleeping && this.lookVec && (this.m.lookFollow || {}).mode === 'frames8') {
+        this._lv = this._lv || { x: 0, y: 0 }; const k = 0.12;
+        this._lv.x += (this.lookVec.x - this._lv.x) * k; this._lv.y += (this.lookVec.y - this._lv.y) * k;
+        tf.dx = (tf.dx || 0) + this._lv.x * 5; tf.dy = (tf.dy || 0) + this._lv.y * 3;
+      }
       if (this.m.source && this.m.source.cropped && a.preset === 'bounce') { tf.sx = 1; tf.sy = 1; }
+      if (a.type === 'procedural' && (a.preset === 'eat' || a.preset === 'drink') && this.img.expressions && this.img.expressions.happy && (t - s.t0) > 1.1) layers[layers.length - 1] = { img: this.img.expressions.happy, alpha: 1 };
       return { layers, ...tf };
     }
 
@@ -230,6 +251,20 @@
         ctx.drawImage(L.img, -ax * scale, -ay * scale, this.canvasW * scale, this.canvasH * scale);
       }
       ctx.restore(); ctx.globalAlpha = 1;
+      // overlays drawn in window space (not flipped / rotated): care icons and floating z's
+      const W = this.canvasW * scale, H = this.canvasH * scale;
+      if (f.overlay && !f.overlay.hide) {
+        const o = f.overlay; const e = o.at < 0.5 ? 2 * o.at * o.at : 1 - Math.pow(-2 * o.at + 2, 2) / 2;
+        const x = originX + W / 2 + (o.from[0] + (o.to[0] - o.from[0]) * e) * W, y = originY + (o.from[1] + (o.to[1] - o.from[1]) * e) * H;
+        ctx.font = `${Math.round(H * 0.12)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(o.icon, x, y);
+      }
+      if (f.zzz || this.sleeping) {
+        const t = this.now();
+        ctx.font = `${Math.round(H * 0.09)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        for (let i = 0; i < 3; i++) { const ph = ((t * 0.6 + i / 3) % 1); ctx.globalAlpha = 1 - ph; ctx.fillStyle = '#3a3634';
+          ctx.fillText('z', originX + W * (0.68 + 0.08 * i), originY + H * (0.18 - ph * 0.22)); }
+        ctx.globalAlpha = 1;
+      }
     }
   }
 
