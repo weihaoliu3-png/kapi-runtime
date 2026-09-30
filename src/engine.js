@@ -191,7 +191,7 @@
       const lf = this.m.lookFollow || {};
       const cands = [];
       if (this.look.fadeFrom && this.look.fadeFrom !== this.look.current && s.action === 'idle')
-        cands.push({ kind: 'look', img: this.look.fadeFrom === 'base' ? this.img.base : this.img.look[this.look.fadeFrom], t0: this.look.fadeT0, ms: lf.crossfadeMs || 120 });
+        cands.push({ kind: 'look', img: this.look.fadeFrom === 'base' ? this.img.base : this.img.look[this.look.fadeFrom], t0: this.look.fadeT0, ms: Math.max(220, lf.crossfadeMs || 0) });
       if (this.transitionFrom && this.transitionFrom !== cur)
         cands.push({ kind: 'trans', img: this.transitionFrom, t0: this.transitionT0, ms: Math.max(a.tweenMs || 0, 120) });
       if (a.type === 'frames') {
@@ -200,7 +200,8 @@
       } else this._keyFade = null;
       let best = null;
       for (const c of cands) {
-        const k = c.ms > 0 ? Math.min(1, (t - c.t0) * 1000 / c.ms) : 1;
+        let k = c.ms > 0 ? Math.min(1, (t - c.t0) * 1000 / c.ms) : 1;
+        if (k < 1) k = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;   // ease-in-out
         if (k >= 1 || !c.img) { if (c.kind === 'look') this.look.fadeFrom = null; if (c.kind === 'trans') this.transitionFrom = null; if (c.kind === 'key') this._keyFade = null; continue; }
         if (!best || c.t0 > best.t0) best = { ...c, k };
       }

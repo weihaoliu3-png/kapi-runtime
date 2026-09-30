@@ -4,7 +4,9 @@
   'use strict';
 
   const HOUR = 3600 * 1000;
-  const DECAY_PER_HOUR = { hunger: 100 / 16, thirst: 100 / 8, energy: 100 / 18 }; // full -> empty in 16h / 8h / 18h
+  const DECAY_PER_HOUR = { hunger: 100 / 20, thirst: 100 / 12, energy: 100 / 20 }; // while Kapi is running: full -> empty in 20h / 12h / 20h
+  const OFFLINE_FACTOR = 0.25;   // when the app was closed, stats drop at a quarter speed…
+  const OFFLINE_FLOOR = 15;      // …and never below this, so it is never "dying" when you come back
   const SLEEP_REGEN_PER_HOUR = 100 / 6;
   const LEVEL_XP = [0, 60, 150, 280, 450, 680, 980, 1350, 1800, 2400, 3200];   // xp needed to reach level i
   const REWARDS = {                                                             // level -> reward description
@@ -37,11 +39,15 @@
       this.catchUp();
     }
     // ---- time ----
-    catchUp() { const now = Date.now(); this._advance(now - this.s.lastTick); this.s.lastTick = now; }
-    _advance(ms) {
-      const h = Math.max(0, ms) / HOUR; const st = this.s;
+    catchUp() { const now = Date.now(); const gap = now - this.s.lastTick; this._advance(gap, gap > 5 * 60000); this.s.lastTick = now; }
+    _advance(ms, offline) {
+      let h = Math.max(0, ms) / HOUR; const st = this.s;
+      if (offline) h *= OFFLINE_FACTOR;
+      const floor = offline ? OFFLINE_FLOOR : 0;
+      const before = { hunger: st.hunger, thirst: st.thirst, energy: st.energy };
       if (st.sleeping) { st.energy = Math.min(100, st.energy + SLEEP_REGEN_PER_HOUR * h); st.hunger = Math.max(0, st.hunger - DECAY_PER_HOUR.hunger * h * 0.5); st.thirst = Math.max(0, st.thirst - DECAY_PER_HOUR.thirst * h * 0.5); }
       else { for (const k of ['hunger', 'thirst', 'energy']) st[k] = Math.max(0, st[k] - DECAY_PER_HOUR[k] * h); }
+      if (offline) for (const k of ['hunger', 'thirst', 'energy']) st[k] = Math.max(st[k], Math.min(before[k], floor));
       const target = (st.hunger + st.thirst + st.energy) / 3;
       st.mood += (target - st.mood) * Math.min(1, h * 0.25);
       st.mood = Math.max(0, Math.min(100, st.mood));

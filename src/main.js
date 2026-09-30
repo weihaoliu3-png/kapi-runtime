@@ -45,7 +45,12 @@
 
   // ---------- helpers ----------
   const toast = (msg, ms = 2500) => { toastEl.textContent = msg; toastEl.style.display = 'block'; clearTimeout(toastEl._t); toastEl._t = setTimeout(() => toastEl.style.display = 'none', ms); };
-  const loadImage = (path) => new Promise((res) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = convertFileSrc(path); });
+  // Images are loaded as data: URLs (read by Rust). asset:// images would taint the canvas on Windows and break pixel hit-testing.
+  const loadImage = async (path) => {
+    let src; try { src = await invoke('read_file_b64', { path }); } catch (e) { try { src = convertFileSrc(path); } catch (_) { return null; } }
+    return new Promise((res) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = src; });
+  };
+  let hitTestBroken = false;
   const join = (...p) => p.join(pet && pet.dir.includes('\\') ? '\\' : '/');
 
   async function loadSettings() {
@@ -151,7 +156,12 @@
 
   function petAlphaAt(x, y) { // x,y in CSS px inside window
     const dpr = window.devicePixelRatio || 1;
-    try { return ctx.getImageData(Math.floor(x * dpr), Math.floor(y * dpr), 1, 1).data[3]; } catch (_) { return 0; }
+    if (!hitTestBroken) {
+      try { return ctx.getImageData(Math.floor(x * dpr), Math.floor(y * dpr), 1, 1).data[3]; }
+      catch (e) { hitTestBroken = true; toast('hit-test fallback: ' + String(e).slice(0, 60), 4000); }
+    }
+    // fallback: the pet's bounding box counts as solid, so interaction never dies
+    return (x >= PAD_SIDE && x <= PAD_SIDE + dispW && y >= PAD_TOP && y <= PAD_TOP + dispH) ? 255 : 0;
   }
 
   // ---------- 30Hz poll: cursor -> hit test (pass-through) + look-follow + drag ----------

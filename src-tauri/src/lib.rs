@@ -69,6 +69,17 @@ fn read_text(path: String) -> Result<String, String> {
     fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))
 }
 
+/// Read an image as a data: URL so the canvas stays same-origin (asset:// images taint the canvas on Windows).
+#[tauri::command]
+fn read_file_b64(path: String) -> Result<String, String> {
+    use base64::Engine;
+    let bytes = fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
+    let mime = match PathBuf::from(&path).extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
+        Some("png") => "image/png", Some("webp") => "image/webp", Some("jpg") | Some("jpeg") => "image/jpeg", Some("gif") => "image/gif", _ => "application/octet-stream",
+    };
+    Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+}
+
 #[tauri::command]
 fn write_text(path: String, content: String) -> Result<(), String> {
     if let Some(parent) = PathBuf::from(&path).parent() {
@@ -382,7 +393,7 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            list_pets, read_text, write_text, settings_path, import_pet, export_pet,
+            list_pets, read_text, read_file_b64, write_text, settings_path, import_pet, export_pet,
             active_window, battery_status, open_pet_window,
             secret_set, secret_get, secret_delete, capafy_get, capafy_post, relay_send, relay_reconnect
         ])
