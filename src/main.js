@@ -77,6 +77,11 @@
     if (manifest.lookFollow && manifest.lookFollow.mode === 'frames8') {
       for (const d of ['d000', 'd045', 'd090', 'd135', 'd180', 'd225', 'd270', 'd315']) images.look[d] = await loadImage(join(info.dir, L.look || 'look', d + '.png'));
     }
+    if (manifest.lookFollow && manifest.lookFollow.mode === 'ring') {
+      const n = manifest.lookFollow.ringFrames || 0, rd = (manifest.lookFollow.ringDir || 'look/ring').split('/');
+      images.ring = [];
+      for (let i = 0; i < n; i++) images.ring.push(await loadImage(join(info.dir, ...rd, String(i).padStart(3, '0') + '.png')));
+    }
     for (const [id, a] of Object.entries(manifest.actions)) {
       if (a.type !== 'frames') continue;
       images.actions[id] = [];

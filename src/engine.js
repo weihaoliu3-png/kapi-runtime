@@ -48,7 +48,9 @@
 
     // ---------- public API used by main.js ----------
     setLookVector(dx, dy) {
-      const lf = this.m.lookFollow || {}; if (lf.mode !== 'frames8') return;
+      const lf = this.m.lookFollow || {};
+      if (lf.mode === 'ring') return this._setLookRing(dx, dy, lf);
+      if (lf.mode !== 'frames8') return;
       if (this.sleeping) return;
       const len = Math.hypot(dx, dy); let target = 'base';
       const rr = lf.radiusPx || 600;
@@ -72,6 +74,33 @@
         this.look.fadeFrom = this.look.current; this.look.fadeT0 = t;
         this.look.target = target; this.look.current = target; this.look.lastChange = t;
       }
+    }
+
+    /** Ring mode: continuous angle -> frame index; adjacent frames differ little so short crossfades read as motion. */
+    _setLookRing(dx, dy, lf) {
+      if (this.sleeping) return;
+      const n = this.img.ring ? this.img.ring.length : 0; if (!n) return;
+      const len = Math.hypot(dx, dy); const dz = lf.deadzonePx || 60; const rr = lf.radiusPx || 600;
+      this.lookVec = { x: Math.max(-1, Math.min(1, dx / rr)), y: Math.max(-1, Math.min(1, dy / rr)) };
+      const inside = this.look.current === 'base' ? len < dz * 1.25 : len < dz * 0.75;
+      let target = 'base';
+      if (!inside) {
+        let ang = Math.atan2(dx, -dy) * 180 / Math.PI; if (ang < 0) ang += 360;
+        // smooth the angle so the index does not jitter between neighbours
+        if (this._ringAng === undefined) this._ringAng = ang;
+        let d = ((ang - this._ringAng) % 360 + 540) % 360 - 180; this._ringAng = (this._ringAng + d * 0.35 + 360) % 360;
+        target = 'r' + (Math.round(this._ringAng / 360 * n) % n);
+      }
+      const t = this.now();
+      if (target !== this.look.target && t - this.look.lastChange >= (lf.holdMs || 60) / 1000) {
+        this.look.fadeFrom = this.look.current; this.look.fadeT0 = t;
+        this.look.target = target; this.look.current = target; this.look.lastChange = t;
+      }
+    }
+    _lookImg(name) {
+      if (name === 'base') return this.img.base;
+      if (name[0] === 'r' && this.img.ring) return this.img.ring[+name.slice(1)] || this.img.base;
+      return (this.img.look && this.img.look[name]) || this.img.base;
     }
 
     play(id, prio) {
@@ -191,7 +220,7 @@
       if (this.sleeping) return (this.img.expressions && this.img.expressions.sleepy) || this.img.blink || this.img.base;
       if (this.now() < this.expr.until && this.img.expressions && this.img.expressions[this.expr.name]) return this.img.expressions[this.expr.name];
       if (this.now() < this.blink.until && this.img.blink) return this.img.blink;
-      if (this.look.current !== 'base' && this.img.look && this.img.look[this.look.current]) return this.img.look[this.look.current];
+      if (this.look.current !== 'base') return this._lookImg(this.look.current);
       return this.img.base;
     }
 
@@ -204,7 +233,7 @@
       const lf = this.m.lookFollow || {};
       const cands = [];
       if (this.look.fadeFrom && this.look.fadeFrom !== this.look.current && s.action === 'idle')
-        cands.push({ kind: 'look', img: this.look.fadeFrom === 'base' ? this.img.base : this.img.look[this.look.fadeFrom], t0: this.look.fadeT0, ms: Math.max(220, lf.crossfadeMs || 0) });
+        cands.push({ kind: 'look', img: this._lookImg(this.look.fadeFrom), t0: this.look.fadeT0, ms: lf.mode === 'ring' ? (lf.crossfadeMs || 90) : Math.max(220, lf.crossfadeMs || 0) });
       if (this.transitionFrom && this.transitionFrom !== cur)
         cands.push({ kind: 'trans', img: this.transitionFrom, t0: this.transitionT0, ms: Math.max(a.tweenMs || 0, 120) });
       if (a.type === 'frames') {
@@ -228,7 +257,7 @@
         if (s.action === 'idle') Object.assign(tf, PROCEDURAL.breathe(t));
       }
       // continuous micro-parallax toward the cursor (whole sprite, so no seams): keeps "tracking" alive between frame switches
-      if (s.action === 'idle' && !this.sleeping && this.lookVec && (this.m.lookFollow || {}).mode === 'frames8') {
+      if (s.action === 'idle' && !this.sleeping && this.lookVec && ['frames8', 'ring'].includes((this.m.lookFollow || {}).mode)) {
         this._lv = this._lv || { x: 0, y: 0 }; const k = 0.12;
         this._lv.x += (this.lookVec.x - this._lv.x) * k; this._lv.y += (this.lookVec.y - this._lv.y) * k;
         tf.dx = (tf.dx || 0) + this._lv.x * 5; tf.dy = (tf.dy || 0) + this._lv.y * 3;

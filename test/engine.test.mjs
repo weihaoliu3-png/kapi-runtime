@@ -77,3 +77,11 @@ console.log('engine tests passed');
   for (let i = 0; i < 40; i++) { c3 += 0.1; e3.update(); } assert.equal(e3.state.action, 'idle', 'eat finishes');
   e3.setSleeping(true); assert.equal(e3.state.action, 'slump'); c3 += 1; f = e3.frame(); assert.ok(f.zzz && f.dy > 10, 'slumped with z');
   c3 += 100; e3.update(); assert.equal(e3.state.action, 'slump', 'stays asleep'); e3.setSleeping(false); assert.equal(e3.state.action, 'idle'); console.log('care fallback anims ok'); }
+// ring mode: continuous index follows the angle, short crossfades, deadzone -> base
+{ let c4 = 9000; const m4 = JSON.parse(JSON.stringify(manifest)); m4.lookFollow = { mode: 'ring', ringFrames: 48, deadzonePx: 60, crossfadeMs: 90, holdMs: 60 };
+  const img4 = { ...images, ring: Array.from({ length: 48 }, (_, i) => img('r' + i)) };
+  const e4 = new PetEngine({ manifest: m4, persona, images: img4 }, { now: () => c4 }); e4.hover = true;
+  e4.setLookVector(0, -300); assert.equal(e4.look.current, 'r0', 'up = frame 0');
+  for (let k = 0; k < 40; k++) { c4 += 0.1; e4.setLookVector(300, 0); } assert.equal(e4.look.current, 'r12', 'right = frame 12 after smoothing');
+  c4 += 0.1; e4.setLookVector(5, 5); assert.equal(e4.look.current, 'base', 'deadzone');
+  c4 += 0.03; const f4 = e4.frame(); assert.equal(f4.layers.length, 2, 'short crossfade into base'); console.log('ring ok'); }

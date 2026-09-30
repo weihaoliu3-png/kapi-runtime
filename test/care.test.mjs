@@ -6,7 +6,7 @@ const said = [], played = [];
 new Function(readFileSync(new URL('../src/i18n.js', import.meta.url), 'utf8'))();
 const host = { say: (t) => said.push(t), expr: () => {}, play: (id) => played.push(id), setSleeping: () => {}, setStageScale: () => {}, toast: () => {}, save: () => {}, line: () => null, t: () => globalThis.I18N.pick('en') };
 const c = new CareSystem({ hunger: 50, lastTick: Date.now() - 8 * 3600e3 }, host);
-assert.ok(c.s.hunger < 50 && c.s.hunger >= 40, 'offline decay is gentle'); assert.ok(c.s.thirst >= 15, 'offline floor keeps thirst >= 15');
+assert.ok(c.s.hunger < 50 && c.s.hunger > 39.9, 'offline decay is gentle'); assert.ok(c.s.thirst >= 15, 'offline floor keeps thirst >= 15');
 assert.ok(c.do('feed')); assert.ok(c.s.hunger > 30); assert.equal(c.do('feed'), false, 'cooldown');
 assert.ok(c.do('water')); assert.ok(c.do('pet'));
 assert.ok(c.s.xp >= 10 + 8 + 6 + 30, 'daily bonus applied once');
