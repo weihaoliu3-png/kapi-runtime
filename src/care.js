@@ -60,18 +60,18 @@
     }
     // ---- actions ----
     can(kind) { const c = CARE[kind]; const last = this.s.lastCare[kind] || 0; return !c.cooldownMin || Date.now() - last >= c.cooldownMin * 60000; }
-    do(kind) {
-      const c = CARE[kind]; const st = this.s;
+    do(kind, opts) {
+      const c = CARE[kind]; const st = this.s; const silent = !!(opts && opts.silent);
       if (kind === 'sleep') return st.sleeping ? this.wake(false) : this.sleep();
       const T = this.host.t().care;
-      if (!this.can(kind)) { const m = Math.ceil((c.cooldownMin * 60000 - (Date.now() - st.lastCare[kind])) / 60000); this.host.say(kind === 'pet' ? T.enough : T.cooldown(T[kind], m)); return false; }
+      if (!this.can(kind)) { if (!silent) { const m = Math.ceil((c.cooldownMin * 60000 - (Date.now() - st.lastCare[kind])) / 60000); this.host.say(kind === 'pet' ? T.enough : T.cooldown(T[kind], m)); } return false; }
       if (st.sleeping) this.wake(false);
       for (const k of ['hunger', 'thirst', 'mood']) if (c[k]) st[k] = Math.min(100, st[k] + c[k]);
       st.lastCare[kind] = Date.now();
       this._gainXp(c.xp, kind);
       if (c.expr) this.host.expr(c.expr, 2000);
       this.host.play(kind === 'feed' ? 'eat' : kind === 'water' ? 'drink' : 'nod');
-      this.host.say(this.host.line(c.say) || T.fallback[c.say]);
+      if (!silent) this.host.say(this.host.line(c.say) || T.fallback[c.say]);
       this.host.save(st); return true;
     }
     sleep() { const st = this.s; const T = this.host.t().care; st.sleeping = true; st.sleepSince = Date.now(); this.host.setSleeping(true); this.host.say(this.host.line('sleep') || T.fallback.sleep); this._gainXp(CARE.sleep.xp, 'sleep'); this.host.save(st); return true; }

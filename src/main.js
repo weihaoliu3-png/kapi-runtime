@@ -80,12 +80,12 @@
     if (manifest.lookFollow && manifest.lookFollow.mode === 'ring') {
       const n = manifest.lookFollow.ringFrames || 0, rd = (manifest.lookFollow.ringDir || 'look/ring').split('/');
       images.ring = [];
-      for (let i = 0; i < n; i++) images.ring.push(await loadImage(join(info.dir, ...rd, String(i).padStart(3, '0') + '.png')));
+      for (let i = 0; i < n; i++) images.ring.push(await loadImage(join(info.dir, ...rd, String(i).padStart(3, '0') + '.' + (manifest.lookFollow.ext || 'png'))));
     }
     for (const [id, a] of Object.entries(manifest.actions)) {
       if (a.type !== 'frames') continue;
       images.actions[id] = [];
-      for (let i = 0; i < a.frames; i++) images.actions[id].push(await loadImage(join(info.dir, a.dir, String(i).padStart(3, '0') + '.png')));
+      for (let i = 0; i < a.frames; i++) images.actions[id].push(await loadImage(join(info.dir, a.dir, String(i).padStart(3, '0') + '.' + (a.ext || 'png'))));
     }
     pet = { ...info, manifest, persona };
     T = I18N.pick(persona.language); chatInput.placeholder = T.chatPlaceholder;
@@ -205,7 +205,7 @@
         if (t - stroke.lastT > 1.5) stroke.xs = []; stroke.lastT = t; stroke.xs.push(lx);
         if (stroke.xs.length > 30) stroke.xs.shift();
         let rev = 0; for (let i = 2; i < stroke.xs.length; i++) { const a = stroke.xs[i - 1] - stroke.xs[i - 2], b = stroke.xs[i] - stroke.xs[i - 1]; if (a * b < 0 && Math.abs(a) > 2 && Math.abs(b) > 2) rev++; }
-        if (rev >= 3) { stroke.xs = []; if (engine.stroke()) care.do('pet'); }
+        if (rev >= 3) { stroke.xs = []; if (engine.stroke()) care.do('pet', { silent: true }); }
       } else stroke.xs = [];
       const visible = overPet || overUi || (careEl.style.display === 'block' && isOver(careEl, lx, ly)) || isOver(pawEl, lx, ly);
       if (visible !== lastHitVisible) { lastHitVisible = visible; await win.setIgnoreCursorEvents(!visible); }
@@ -288,15 +288,29 @@
       if (/natural|online|neural/.test(n)) s += 5; if (/xiaoxiao|xiaoyi|yunxi|siri|premium|enhanced|samantha|ava|google/.test(n)) s += 3; if (/huihui|kangkang|david|zira/.test(n)) s -= 2; return s; };
     return voices.slice().sort((a, b) => score(b) - score(a))[0] || null;
   }
+  let speakSeq = 0, lastSpeakAt = 0;
+  function stopVoice() {
+    if (currentAudio) { try { currentAudio.pause(); currentAudio.currentTime = 0; } catch (_) {} currentAudio = null; }
+    if ('speechSynthesis' in window) { try { speechSynthesis.cancel(); } catch (_) {} }
+  }
   async function speak(text) {
     if (settings.muted || !text) return;
+    const now = performance.now();
+    if (now - lastSpeakAt < 700) return;            // rapid-fire lines (stroking, multi-click): keep the bubble, skip the audio
+    lastSpeakAt = now;
+    const seq = ++speakSeq;
+    stopVoice();                                     // never two voices at once: mp3 or system, whichever was playing
     const rel = voiceIndex[text];
     if (rel) {
-      try { const src = await invoke('read_file_b64', { path: join(pet.dir, rel) }); if (currentAudio) { currentAudio.pause(); } currentAudio = new Audio(src); currentAudio.volume = 0.9; await currentAudio.play(); return; } catch (_) {}
+      try {
+        const src = await invoke('read_file_b64', { path: join(pet.dir, rel) });
+        if (seq !== speakSeq) return;                // a newer line arrived while loading
+        stopVoice(); currentAudio = new Audio(src); currentAudio.volume = 0.9; await currentAudio.play(); return;
+      } catch (_) {}
     }
-    if (!('speechSynthesis' in window)) return;
+    if (!('speechSynthesis' in window) || seq !== speakSeq) return;
     try {
-      speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = (pet.persona.language || 'zh-CN');
+      const u = new SpeechSynthesisUtterance(text); u.lang = (pet.persona.language || 'zh-CN');
       if (!pickedVoice) pickedVoice = bestSystemVoice(u.lang); if (pickedVoice) u.voice = pickedVoice;
       u.rate = 1.05; u.pitch = 1.1; speechSynthesis.speak(u);
     } catch (_) {}
