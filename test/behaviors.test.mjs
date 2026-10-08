@@ -45,3 +45,19 @@ console.log('behaviors tests passed');
   assert.ok(Math.abs(w2.x - 940) < 30 && Math.abs(w2.y - (500 - 480 * 0.35)) < 30, 'settled below-right of cursor'); assert.equal(b2.flip, false);
   cur = { x: 200, y: 300 }; const r = b2.step(1 / 30); assert.ok(r && r.flip === true, 'faces left when cursor moves left');
   b2.setFollow(false); assert.equal(b2.step(1 / 30), null, 'no motion after unfollow'); console.log('follow ok'); }
+// perch: normal window -> feet on its top edge at the right corner; maximised window -> inside the corner, never off-screen; hint when no window
+{ const w3 = { x: 100, y: 600, w: 360, h: 480 }; const said3 = [];
+  const b3 = new Behaviors({ getWin: () => w3, getMonitor: () => mon, getCursor: () => null, engine: { hover: false, sleeping: false, state: { action: 'idle' } }, say: (x) => said3.push(x), expr: () => {}, play: () => {}, line: () => null, t: () => I18N.pick('en') });
+  const footY = 420, petW = 360;
+  b3.setPerch(true); assert.equal(b3.mode, 'perch'); assert.ok(said3.at(-1).includes('view'));
+  assert.ok(b3.perchOn({ x: 400, y: 500, w: 900, h: 500 }, footY, petW), 'target set');
+  for (let i = 0; i < 600; i++) { clock += 1 / 30; const r = b3.step(1 / 30); if (!r) break; w3.x = r.x; w3.y = r.y; if (r.arrived) break; }
+  assert.equal(w3.y, 500 - footY, 'feet on the window top edge'); assert.equal(w3.x, 400 + 900 - petW - 24, 'right corner'); assert.equal(b3.mode, 'perch');
+  assert.equal(b3.perchOn({ x: 400, y: 500, w: 900, h: 500 }, footY, petW), false, 'same window is not re-targeted');
+  assert.ok(b3.perchOn({ x: -8, y: -8, w: 1936, h: 1096 }, footY, petW), 'maximised window');
+  for (let i = 0; i < 600; i++) { clock += 1 / 30; const r = b3.step(1 / 30); if (!r) break; w3.x = r.x; w3.y = r.y; if (r.arrived) break; }
+  assert.equal(w3.y, mon.y, 'sits inside the top edge instead of above the screen'); assert.ok(w3.x + petW <= mon.x + mon.w && w3.x >= mon.x, 'x on screen');
+  const b4 = new Behaviors({ getWin: () => w3, getMonitor: () => mon, getCursor: () => null, engine: { hover: false, sleeping: false, state: { action: 'idle' } }, say: (x) => said3.push(x), expr: () => {}, play: () => {}, line: () => null, t: () => I18N.pick('en') });
+  b4.setPerch(true); const n4 = said3.length; b4.perchNoWindow(); assert.equal(said3.length, n4, 'no hint yet');
+  clock += 3.5; b4.perchNoWindow(); assert.ok(said3.at(-1).includes('Click the window'), 'hint after 3s'); b4.perchNoWindow(); assert.equal(said3.length, n4 + 1, 'hint only once');
+  b4.setPerch(false); assert.equal(b4.mode, 'idle'); console.log('perch ok'); }

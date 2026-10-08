@@ -56,13 +56,31 @@
     }
 
     // ---------- perch on active window ----------
-    setPerch(on) { this.mode = on ? 'perch' : 'idle'; this.lastPerchRect = null; if (on) this.h.say(this.h.line('perch') || this.h.t().beh.perch); }
+    setPerch(on) {
+      this.mode = on ? 'perch' : 'idle'; this.lastPerchRect = null; this._perchMove = false; this.target = null;
+      this.perchSince = on ? performance.now() / 1000 : 0; this.perchHinted = false; this.perchedOnce = false;
+      if (on) this.h.say(this.h.line('perch') || this.h.t().beh.perch);
+    }
+    /**
+     * Sit on the top-right corner of `rect` (logical px). Maximised / full-height windows (top edge at or above the
+     * monitor top, so the pet would be pushed off-screen) are handled by sitting *inside* the corner instead.
+     * Returns true when a new target was set.
+     */
     perchOn(rect, petFootY, petW) {
-      if (!rect || rect.w < 200) return;
+      if (!rect || rect.w < 200 || rect.h < 80) return false;
       const key = `${Math.round(rect.x)}:${Math.round(rect.y)}:${Math.round(rect.w)}`;
-      if (this.lastPerchRect === key) return; this.lastPerchRect = key;
-      const w = this.h.getWin(); const x = rect.x + rect.w - petW - 24; const y = rect.y - petFootY;
-      this.target = { x, y }; this.flip = x < w.x; this._perchMove = true;
+      if (this.lastPerchRect === key) return false; this.lastPerchRect = key;
+      const w = this.h.getWin(), m = this.h.getMonitor() || { x: -1e9, y: -1e9, w: 2e9, h: 2e9 };
+      let x = rect.x + rect.w - petW - 24; let y = rect.y - petFootY;
+      if (y < m.y) y = Math.max(m.y, rect.y);                                   // maximised: sit inside the corner
+      x = Math.min(Math.max(x, m.x), m.x + m.w - petW);
+      y = Math.min(y, m.y + m.h - petFootY);
+      this.target = { x, y }; this.flip = x < w.x; this._perchMove = true; this.perchedOnce = true; return true;
+    }
+    /** Called by the host every poll while in perch mode and no window has been found yet: hint once after 3s. */
+    perchNoWindow() {
+      if (this.mode !== 'perch' || this.perchedOnce || this.perchHinted) return;
+      if (performance.now() / 1000 - this.perchSince > 3) { this.perchHinted = true; this.h.say(this.h.line('perchHint') || this.h.t().beh.perchHint); }
     }
 
     // ---------- typing / battery / greeting ----------

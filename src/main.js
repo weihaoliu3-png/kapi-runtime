@@ -89,7 +89,7 @@
     }
     pet = { ...info, manifest, persona };
     T = I18N.pick(persona.language); chatInput.placeholder = T.chatPlaceholder;
-    await loadVoiceIndex(); pickedVoice = null;
+    await loadVoiceIndex();
     engine = new PetEngine({ manifest, persona, images }, {
       onSay: (text, sticky) => say(text, sticky),
       onAction: () => {},
@@ -276,46 +276,42 @@
     bubble.style.left = cx + 'px'; bubble.style.top = Math.max(4, PAD_TOP - bubble.offsetHeight - 14) + 'px';
     chat.style.top = Math.max(4, PAD_TOP - 48) + 'px';
   }
-  let voiceIndex = {}, currentAudio = null, pickedVoice = null;
+  let voiceIndex = {}, currentAudio = null;
   async function loadVoiceIndex() {
     voiceIndex = {};
     try { voiceIndex = JSON.parse(await invoke('read_text', { path: join(pet.dir, 'voice', 'index.json') })); } catch (_) {}
   }
-  function bestSystemVoice(lang) {
-    if (!('speechSynthesis' in window)) return null;
-    const voices = speechSynthesis.getVoices() || []; const l = (lang || 'zh-CN').toLowerCase(); const base = l.split('-')[0];
-    const score = (v) => { const n = (v.name || '').toLowerCase(); let s = 0; if ((v.lang || '').toLowerCase() === l) s += 6; else if ((v.lang || '').toLowerCase().startsWith(base)) s += 3;
-      if (/natural|online|neural/.test(n)) s += 5; if (/xiaoxiao|xiaoyi|yunxi|siri|premium|enhanced|samantha|ava|google/.test(n)) s += 3; if (/huihui|kangkang|david|zira/.test(n)) s -= 2; return s; };
-    return voices.slice().sort((a, b) => score(b) - score(a))[0] || null;
-  }
   let speakSeq = 0, lastSpeakAt = 0;
+  let currentBabble = null;
   function stopVoice() {
     if (currentAudio) { try { currentAudio.pause(); currentAudio.currentTime = 0; } catch (_) {} currentAudio = null; }
-    if ('speechSynthesis' in window) { try { speechSynthesis.cancel(); } catch (_) {} }
+    if (currentBabble) { try { currentBabble.stop(); } catch (_) {} currentBabble = null; }
   }
+  // One voice kind per pet (pet.json.voice.kind): 'tts' plays the pre-rendered clip and stays SILENT for lines without one
+  // (chat replies), 'babble' synthesises every line, 'none' is silent. The system speech voice is gone on purpose: it
+  // sounded different on every machine and mixed a second voice into the same pet.
   async function speak(text) {
     if (settings.muted || !text) return;
     const now = performance.now();
     if (now - lastSpeakAt < 700) return;            // rapid-fire lines (stroking, multi-click): keep the bubble, skip the audio
     lastSpeakAt = now;
     const seq = ++speakSeq;
-    stopVoice();                                     // never two voices at once: mp3 or system, whichever was playing
-    const rel = voiceIndex[text];
-    if (rel) {
-      try {
-        const src = await invoke('read_file_b64', { path: join(pet.dir, rel) });
-        if (seq !== speakSeq) return;                // a newer line arrived while loading
-        stopVoice(); currentAudio = new Audio(src); currentAudio.volume = 0.9; await currentAudio.play(); return;
-      } catch (_) {}
+    stopVoice();                                     // never two voices at once
+    const kind = KapiVoice.voiceKind(pet.manifest, voiceIndex);
+    if (kind === 'none') return;
+    if (kind === 'babble') {
+      const v = pet.manifest.voice || {};
+      const plan = KapiVoice.planBabble(text, { preset: v.preset || 'bright', hz: v.baseHz, rate: v.rate });
+      currentBabble = KapiVoice.renderBabble(plan, 0.45); return;
     }
-    if (!('speechSynthesis' in window) || seq !== speakSeq) return;
+    const rel = voiceIndex[text];
+    if (!rel) return;                                // tts pet, no clip for this line: bubble only
     try {
-      const u = new SpeechSynthesisUtterance(text); u.lang = (pet.persona.language || 'zh-CN');
-      if (!pickedVoice) pickedVoice = bestSystemVoice(u.lang); if (pickedVoice) u.voice = pickedVoice;
-      u.rate = 1.05; u.pitch = 1.1; speechSynthesis.speak(u);
+      const src = await invoke('read_file_b64', { path: join(pet.dir, rel) });
+      if (seq !== speakSeq) return;                  // a newer line arrived while loading
+      stopVoice(); currentAudio = new Audio(src); currentAudio.volume = 0.9; await currentAudio.play();
     } catch (_) {}
   }
-  if ('speechSynthesis' in window) speechSynthesis.onvoiceschanged = () => { pickedVoice = null; };
   function greet() {
     const h = new Date().getHours(); const k = h < 12 ? 'greetingMorning' : h >= 21 ? 'greetingEvening' : null;
     if (k && (pet.persona.lines || {})[k]) setTimeout(() => engine.sayFrom(k), 1200);
@@ -506,14 +502,26 @@
   listen('pet-rect', (e) => { const p = e.payload; if (!p || p.label === win.label || !beh) return; otherPets[p.label] = p; beh.onOtherPet(p.id, p.rect, p.name); });
   rectTimer = setInterval(() => { if (pet && winRect) window.__TAURI__.event.emit('pet-rect', { label: win.label, id: pet.id, name: pet.name, rect: winRect }); }, 800);
   batteryTimer = setInterval(async () => { if (!beh) return; try { beh.onBattery(await invoke('battery_status')); } catch (_) {} }, 60000);
+  // Foreground-window tracking. The pet itself becomes the foreground window the moment the user right-clicks it, so
+  // "sit on the window" must use the last *other* window the user was in (remembered here at all times), not the
+  // window that is active when the menu item fires. While perched the pet is forced on top so it stays visible on
+  // maximised windows; the user's own always-on-top setting is restored on unperch.
+  let lastForeign = null, perchTopForced = false;
   perchTimer = setInterval(async () => {
-    if (!beh || beh.mode !== 'perch') return;
+    if (!beh) return;
     try {
-      const r = await invoke('active_window'); if (!r || /Kapi/i.test(r.title || '') || /kapi/i.test(r.app || '')) return;
-      const sf = await win.scaleFactor(); const rect = { x: r.x / sf, y: r.y / sf, w: r.w / sf, h: r.h / sf };
-      beh.perchOn(rect, PAD_TOP + dispH, winRect ? winRect.w : dispW + PAD_SIDE * 2);
-    } catch (_) {}
-  }, 1500);
+      const r = await invoke('active_window');
+      if (r && r.w > 0 && !/^kapi$/i.test((r.app || '').replace(/\.exe$/i, '')) && !/^kapi(\s|$)/i.test(r.title || '')) {
+        const sf = await win.scaleFactor(); lastForeign = { x: r.x / sf, y: r.y / sf, w: r.w / sf, h: r.h / sf, at: Date.now() };
+      }
+      const perching = beh.mode === 'perch';
+      if (perching && !perchTopForced) { perchTopForced = true; await win.setAlwaysOnTop(true); }
+      if (!perching && perchTopForced) { perchTopForced = false; await win.setAlwaysOnTop(!!settings.alwaysOnTop); }
+      if (!perching) return;
+      if (lastForeign) beh.perchOn(lastForeign, PAD_TOP + dispH, winRect ? winRect.w : dispW + PAD_SIDE * 2);
+      else beh.perchNoWindow();
+    } catch (_) { if (beh.mode === 'perch') beh.perchNoWindow(); }
+  }, 1000);
   listen('settings-changed', async () => { await loadSettings(); await win.setAlwaysOnTop(!!settings.alwaysOnTop); if (pet) await applyScale(); });
   win.onDragDropEvent(async (e) => { if (e.payload.type === 'drop' && e.payload.paths?.length) await importPet(e.payload.paths[0]); });
 
