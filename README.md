@@ -29,6 +29,17 @@ npm run build         # 产出 src-tauri/target/release/bundle/…
 - 首次启动操作提示气泡。
 - 原图不再上屏：宠物包 `layers.base` 必须是生成帧。
 
+## v0.8 互动里程碑 / 全屏特效 / 打字种花
+
+- **里程碑**（`src/milestones.js`）：一张表驱动"连点 10 次 → 奶茶爆屏""累计摸 5 次 → 满屏爱心""收集 5 朵花 → 花瓣雨"。阈值、时间窗、冷却从 `pet.json.milestones` 读（skill 可配），运行器只有默认值；计数和冷却存 `state.json.milestones`，重启保留；点击 / 抚摸 / 摘花分别计数、分别冷却。原有的 4 连点生气不变。
+- **全屏特效层**（`src/effects.js` + `fx.html` + Rust `open_fx_window`）：按需开一个覆盖当前显示器的透明、置顶、鼠标穿透窗口，播完自毁，不抢焦点不挡键盘。奶茶：杯子从桌宠处抛物线飞向屏幕边、爆开、奶茶贴花淡出、珍珠粒子下落反弹；爱心 / 花瓣 / 音符：3 秒满屏飘落。全部程序化绘制；手里的杯子用宠物包 `props/cup.png`（skill 按宠物画风生成），没有就用内置画法。
+- **打字种花**（`src/garden.js`）：只数按键次数不读内容；有效打字 30 秒花苞 → 2 分钟开花 → 5 分钟变大 → 10 分钟摘下放脚边；停止打字只暂停不倒退；花是独立挂载层跟随头部，不改人物图；花园存 `state.json.garden`，最多显示 5 朵，多的记数；每 5 朵触发花瓣雨。花的图用 `props/flower_1..3.png`，没有就程序化画。
+- 新单测 `test/milestones.test.mjs`（里程碑 / 花园 / 抛物线）。
+
+## v0.7.1 修复
+
+- 打字点头没反应（Windows 实机反馈）：`behaviors.onTyping` 播放的是 `typing` 动作，而宠物包里只有 `nod`，`engine.play` 对不存在的动作直接返回 false。现在没有 `typing` 就点头（`nod`），阈值降到每秒 2 键（80ms 轮询会漏键），1.5 秒最多一次。键盘监听只数按键次数，不读内容。
+
 ## v0.7 声音（`src/voice.js`）
 
 一只宠物只有一种声音，由 `pet.json.voice.kind` 决定，不混用：

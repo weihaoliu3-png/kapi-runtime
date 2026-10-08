@@ -211,6 +211,20 @@ fn open_pet_window(app: AppHandle, id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Fullscreen effect layer: a transparent, always-on-top, click-through window covering one monitor (logical px rect
+/// supplied by the pet window). Label fx-<n>; the page closes itself when the effect is done.
+#[tauri::command]
+fn open_fx_window(app: AppHandle, x: f64, y: f64, w: f64, h: f64) -> Result<String, String> {
+    let label = format!("fx-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
+    let url = tauri::WebviewUrl::App("fx.html".into());
+    let win = tauri::WebviewWindowBuilder::new(&app, &label, url)
+        .title("Kapi fx").position(x, y).inner_size(w, h).transparent(true).decorations(false).shadow(false)
+        .always_on_top(true).skip_taskbar(true).resizable(false).focused(false).visible_on_all_workspaces(true)
+        .build().map_err(|e| e.to_string())?;
+    let _ = win.set_ignore_cursor_events(true);
+    Ok(label)
+}
+
 /// Global input watcher (polling, no hooks): once per second emits "user-input" {keys, mouse} when anything happened.
 fn spawn_input_watcher(app: AppHandle) {
     std::thread::spawn(move || {
@@ -394,7 +408,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             list_pets, read_text, read_file_b64, write_text, settings_path, import_pet, export_pet,
-            active_window, battery_status, open_pet_window,
+            active_window, battery_status, open_pet_window, open_fx_window,
             secret_set, secret_get, secret_delete, capafy_get, capafy_post, relay_send, relay_reconnect
         ])
         .setup(|app| {

@@ -7,7 +7,7 @@ new Function(readFileSync(new URL('../src/behaviors.js', import.meta.url), 'utf8
 const { Behaviors, I18N } = globalThis;
 const said = [], played = [], exprs = [];
 const win = { x: 500, y: 400, w: 360, h: 480 }, mon = { x: 0, y: 0, w: 1920, h: 1080 };
-const engine = { hover: false, sleeping: false, state: { action: 'idle' }, play: (id) => played.push(id) };
+const engine = { hover: false, sleeping: false, state: { action: 'idle' }, m: { actions: { nod: {}, wave: {} } }, play: (id) => played.push(id) };
 const b = new Behaviors({ getWin: () => win, getMonitor: () => mon, getCursor: () => ({ x: 1200, y: 500 }), engine,
   say: (x) => said.push(x), expr: (n) => exprs.push(n), play: (id) => played.push(id), line: () => null, t: () => I18N.pick('en') });
 
@@ -61,3 +61,11 @@ console.log('behaviors tests passed');
   b4.setPerch(true); const n4 = said3.length; b4.perchNoWindow(); assert.equal(said3.length, n4, 'no hint yet');
   clock += 3.5; b4.perchNoWindow(); assert.ok(said3.at(-1).includes('Click the window'), 'hint after 3s'); b4.perchNoWindow(); assert.equal(said3.length, n4 + 1, 'hint only once');
   b4.setPerch(false); assert.equal(b4.mode, 'idle'); console.log('perch ok'); }
+
+// typing: a pet without a `typing` action nods; throttled to one nod per 1.5s
+{ const played2 = []; const eng2 = { hover: false, sleeping: false, state: { action: 'idle' }, m: { actions: { nod: {} } }, play: (id) => played2.push(id) };
+  const b5 = new Behaviors({ getWin: () => win, getMonitor: () => mon, getCursor: () => null, engine: eng2, say: () => {}, expr: () => {}, play: () => {}, line: () => null, t: () => I18N.pick('en') });
+  clock += 10; b5.onTyping(3); b5.onTyping(3); assert.deepEqual(played2, ['nod'], 'nods once via fallback');
+  clock += 2; b5.onTyping(2); assert.equal(played2.length, 2, 'nods again after the throttle');
+  eng2.m.actions.typing = {}; clock += 2; b5.onTyping(4); assert.equal(played2.at(-1), 'typing', 'uses the dedicated action when present');
+  console.log('typing ok'); }
