@@ -33,7 +33,7 @@ jobs:
         with: { workspaces: "${{ env.DIR }}/src-tauri" }
       - name: Install, icons, unit tests
         shell: bash
-        run: cd "$DIR" && npm install && npm run icon && node test/engine.test.mjs && node test/care.test.mjs && node test/behaviors.test.mjs && node test/connect.test.mjs && node test/voice.test.mjs && node test/milestones.test.mjs
+        run: cd "$DIR" && (npm ci || npm install) && npm run icon && for t in test/*.test.mjs; do echo "== $t"; node "$t" || exit 1; done
       - name: Build
         shell: bash
         run: cd "$DIR" && npm run tauri build -- --target ${{ matrix.target }}
