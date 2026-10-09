@@ -87,6 +87,44 @@
     return { stop() { for (const o of nodes) { try { o.stop(); } catch (_) {} } try { master.disconnect(); } catch (_) {} } };
   }
 
+  /** A short "ouch" in the pet's own babble timbre: 2-3 quick high syllables with a falling tail. Same preset -> same
+   *  character voice as its babble lines; used when a tts pet has no recorded whipReact clip, and for babble pets. */
+  function planHit(opts) {
+    const alias = { female: 'bright', male: 'low' };
+    const pr = (opts && opts.preset) || 'bright';
+    const base = PRESETS[alias[pr] || pr] || PRESETS.bright;
+    const seed = (opts && opts.seed) || 0;
+    const hz = (opts && opts.hz) || base.hz * 1.45;
+    const n = 2 + (seed % 2);
+    const dur = 0.075;
+    const notes = [];
+    for (let i = 0; i < n; i++) {
+      const fall = i === n - 1 ? -5 : 3 - i * 2;                           // up, then a drop on the last syllable
+      notes.push({ t: i * dur * 1.15, dur: dur * (i === n - 1 ? 1.6 : 1), hz: hz * Math.pow(2, fall / 12), vowel: 0.75 - i * 0.2, gain: 0.95 });
+    }
+    return { notes, total: n * dur * 1.15 + dur * 0.6, rate: 1 / dur };
+  }
+
+  /** Whip crack: a filtered noise burst with a fast downward sweep plus a short click. Procedural, no asset.
+   *  Returns a handle { stop() }; a no-op without WebAudio. */
+  function whipCrack(volume) {
+    if (!global.AudioContext && !global.webkitAudioContext) return { stop() {} };
+    ctx = ctx || new (global.AudioContext || global.webkitAudioContext)();
+    if (ctx.state === 'suspended') { try { ctx.resume(); } catch (_) {} }
+    const t0 = ctx.currentTime + 0.005; const len = 0.22; const sr = ctx.sampleRate;
+    const buf = ctx.createBuffer(1, Math.ceil(sr * len), sr); const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) { const k = i / d.length; d[i] = (Math.random() * 2 - 1) * Math.pow(1 - k, 2.2) * (k < 0.02 ? k / 0.02 : 1); }
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.1;
+    bp.frequency.setValueAtTime(3800, t0); bp.frequency.exponentialRampToValueAtTime(500, t0 + 0.16);
+    const click = ctx.createOscillator(); click.type = 'square'; click.frequency.setValueAtTime(1800, t0); click.frequency.exponentialRampToValueAtTime(300, t0 + 0.05);
+    const cg = ctx.createGain(); cg.gain.setValueAtTime(0.5, t0); cg.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.05);
+    const master = ctx.createGain(); master.gain.value = volume == null ? 0.6 : volume;
+    src.connect(bp); bp.connect(master); click.connect(cg); cg.connect(master); master.connect(ctx.destination);
+    src.start(t0); click.start(t0); click.stop(t0 + 0.06); src.stop(t0 + len);
+    return { stop() { try { src.stop(); click.stop(); } catch (_) {} try { master.disconnect(); } catch (_) {} } };
+  }
+
   /** The pet's voice kind, with a safe default for packs made before voice.kind existed. */
   function voiceKind(manifest, voiceIndex) {
     const v = (manifest && manifest.voice) || {};
@@ -94,5 +132,5 @@
     return (voiceIndex && Object.keys(voiceIndex).length) ? 'tts' : 'babble';
   }
 
-  global.KapiVoice = { PRESETS, planBabble, renderBabble, voiceKind, syllableUnits };
+  global.KapiVoice = { PRESETS, planBabble, renderBabble, voiceKind, syllableUnits, planHit, whipCrack };
 })(typeof window !== 'undefined' ? window : globalThis);

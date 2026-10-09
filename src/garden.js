@@ -1,12 +1,12 @@
 // Kapi typing garden (v0.8): typing grows a flower on the pet's head; the pet picks it and keeps it beside itself.
-// Growth follows ACTIVE typing seconds only (keys counted, never read); pausing pauses, never regresses.
-// Stages (pet.json.garden.stagesSec, defaults 30 / 120 / 300 / 600 s): bud -> bloom -> big -> picked.
+// Growth follows typing rate (key counts only, never text); pausing pauses, never regresses.
+// Stages are growth units, accelerated by faster typing.
 // Picked flowers accumulate in state.garden.flowers (shown up to `showMax` beside the pet) and feed the 'flower' milestone.
 // Pure logic + drawing helpers; the host persists state and supplies prop images when the skill generated them.
 (function (global) {
   'use strict';
 
-  const DEFAULTS = { stagesSec: [30, 120, 300, 600], showMax: 5, style: 'daisy', color: '#ff7aa2', idleGapSec: 2 };
+  const DEFAULTS = { stagesSec: [8, 25, 50, 90], showMax: 5, style: 'daisy', color: '#ff7aa2', idleGapSec: 2 };
 
   class Garden {
     /** host: { now() -> seconds, save(state), onPick(flower), say(key), state } ; cfg = pet.json.garden */
@@ -21,7 +21,8 @@
       const g = this.st.garden; const t = this.h.now();
       // one active second per real second, even if the host reports faster
       if (t - this._lastTick < 0.9) return; this._lastTick = t;
-      g.growthSec += 1;
+      // 1-2 keys/s: 1 unit; 3-5: 2 units; 6+: 3 units.
+      g.growthSec += keys >= 6 ? 3 : keys >= 3 ? 2 : 1;
       const before = g.stage; g.stage = this.stageFor(g.growthSec);
       if (g.stage !== before) {
         if (g.stage === 1) this.h.say('flowerBud'); else if (g.stage === 2) this.h.say('flowerBloom');

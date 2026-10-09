@@ -20,3 +20,11 @@ assert.equal(KapiVoice.voiceKind({}, {}), 'babble');
 // render without AudioContext is a no-op handle
 assert.doesNotThrow(() => KapiVoice.renderBabble(a, 0.5).stop());
 console.log('voice tests passed');
+// whip hit sounds: a short high "ouch" in the pet's own preset timbre; the crack is a no-op without WebAudio
+{ const hitB = KapiVoice.planHit({ preset: 'bright' }), hitL = KapiVoice.planHit({ preset: 'low' }), hitF = KapiVoice.planHit({ preset: 'female' });
+  assert.ok(hitB.notes.length >= 2 && hitB.total < 0.4, 'short burst');
+  assert.ok(hitB.notes[0].hz > KapiVoice.PRESETS.bright.hz, 'higher than the speaking pitch');
+  assert.ok(hitL.notes[0].hz < hitB.notes[0].hz, 'low preset stays lower'); assert.equal(hitF.notes[0].hz, hitB.notes[0].hz, 'female maps to bright');
+  assert.ok(hitB.notes.at(-1).hz < hitB.notes[0].hz, 'falls at the end');
+  assert.doesNotThrow(() => KapiVoice.whipCrack(0.6).stop());
+  console.log('whip sounds ok'); }

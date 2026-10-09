@@ -11,7 +11,8 @@
     shake:   (t) => { const p = Math.min(1, t / 0.6); return { dx: 8 * Math.sin(p * Math.PI * 4), done: p >= 1 }; },
     jump:    (t) => { const p = Math.min(1, t / 0.6); return { dy: -40 * Math.sin(p * Math.PI), done: p >= 1 }; },
     wiggle:  (t) => { const p = Math.min(1, t / 0.8); return { rot: 4 * Math.sin(p * Math.PI * 6), done: p >= 1 }; },
-    typing:  (t) => { const p = Math.min(1, t / 0.5); return { dy: 3 * Math.abs(Math.sin(p * Math.PI * 2)), done: p >= 1 }; },
+    typing:  (t) => { const p = Math.min(1, t / 0.7); return { dy: 14 * Math.abs(Math.sin(p * Math.PI * 2)), rot: 3 * Math.sin(p * Math.PI * 2), done: p >= 1 }; },
+    dragWiggle: (t, ctx) => ({ dx: 7 * Math.sin(t * 19), rot: Math.max(-9, Math.min(9, -(ctx.dragVX || 0) * 0.025)) + 5 * Math.sin(t * 16) }),
     // care fallbacks (used only when the pet has no eat / drink / sleep frames)
     eat:     (t) => { const D = 2.6; const p = Math.min(1, t / D); const chew = t > 1.1 && t < 2.2 ? 4 * Math.abs(Math.sin((t - 1.1) * Math.PI * 4)) : 0;
                       return { dy: chew, overlay: { icon: '🍙', from: [-0.35, 0.55], to: [0.08, 0.28], at: Math.min(1, t / 1.0), hide: t > 2.2 }, done: p >= 1 }; },
@@ -137,7 +138,6 @@
     }
     /** Called by the runtime when the cursor strokes the head (back-and-forth). */
     stroke() {
-      const t = this.now(); if (this._lastStroke && t - this._lastStroke < 4) return false; this._lastStroke = t;
       this.userInput(); this.showExpression('shy', 1000); this.sayFrom('pet');
       setTimeout(() => this.showExpression('happy', 1500), 1000);
       if (this.opts.onStroke) this.opts.onStroke(); return true;

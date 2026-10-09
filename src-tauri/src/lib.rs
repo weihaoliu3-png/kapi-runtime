@@ -119,6 +119,11 @@ fn import_pet(app: AppHandle, path: String) -> Result<PetInfo, String> {
     let name = v["name"].as_str().unwrap_or(&id).to_string();
     let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let target = data.join("pets").join(&id);
+    // Preserve the pet's progress when an update moves a portable pet into app data.
+    // The package contains assets and behavior, but the local state belongs to the user.
+    let previous_state = std::iter::once(target.clone())
+        .chain(pets_roots(&app).into_iter().map(|root| root.join(&id)))
+        .find_map(|dir| fs::read(dir.join("state.json")).ok());
     if target.exists() {
         fs::remove_dir_all(&target).map_err(|e| e.to_string())?;
     }
@@ -141,6 +146,9 @@ fn import_pet(app: AppHandle, path: String) -> Result<PetInfo, String> {
             f.read_to_end(&mut buf).map_err(|e| e.to_string())?;
             fs::write(&out, buf).map_err(|e| e.to_string())?;
         }
+    }
+    if let Some(state) = previous_state {
+        fs::write(target.join("state.json"), state).map_err(|e| e.to_string())?;
     }
     Ok(PetInfo { id, name, version, dir: target.to_string_lossy().to_string() })
 }
@@ -211,21 +219,7 @@ fn open_pet_window(app: AppHandle, id: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Fullscreen effect layer: a transparent, always-on-top, click-through window covering one monitor (logical px rect
-/// supplied by the pet window). Label fx-<n>; the page closes itself when the effect is done.
-#[tauri::command]
-fn open_fx_window(app: AppHandle, x: f64, y: f64, w: f64, h: f64) -> Result<String, String> {
-    let label = format!("fx-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0));
-    let url = tauri::WebviewUrl::App("fx.html".into());
-    let win = tauri::WebviewWindowBuilder::new(&app, &label, url)
-        .title("Kapi fx").position(x, y).inner_size(w, h).transparent(true).decorations(false).shadow(false)
-        .always_on_top(true).skip_taskbar(true).resizable(false).focused(false).visible_on_all_workspaces(true)
-        .build().map_err(|e| e.to_string())?;
-    let _ = win.set_ignore_cursor_events(true);
-    Ok(label)
-}
-
-/// Global input watcher (polling, no hooks): once per second emits "user-input" {keys, mouse} when anything happened.
+/// Global input watcher: counts key presses without reading text and reports Ctrl transitions for pet gestures.
 fn spawn_input_watcher(app: AppHandle) {
     std::thread::spawn(move || {
         use device_query::{DeviceQuery, DeviceState};
@@ -233,12 +227,18 @@ fn spawn_input_watcher(app: AppHandle) {
         let mut last_keys: Vec<device_query::Keycode> = Vec::new();
         let mut last_mouse = (0i32, 0i32);
         let mut presses = 0u32;
+        let mut last_ctrl = false;
         let mut window_start = std::time::Instant::now();
         loop {
             std::thread::sleep(std::time::Duration::from_millis(80));
             let keys = dev.get_keys();
+            let ctrl = keys.contains(&device_query::Keycode::LControl) || keys.contains(&device_query::Keycode::RControl);
+            if ctrl != last_ctrl {
+                let _ = app.emit("modifier-state", serde_json::json!({ "ctrl": ctrl }));
+                last_ctrl = ctrl;
+            }
             for k in &keys {
-                if !last_keys.contains(k) {
+                if !last_keys.contains(k) && !matches!(k, device_query::Keycode::LControl | device_query::Keycode::RControl | device_query::Keycode::LShift | device_query::Keycode::RShift | device_query::Keycode::LAlt | device_query::Keycode::RAlt | device_query::Keycode::LMeta | device_query::Keycode::RMeta) {
                     presses += 1;
                 }
             }
@@ -408,7 +408,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             list_pets, read_text, read_file_b64, write_text, settings_path, import_pet, export_pet,
-            active_window, battery_status, open_pet_window, open_fx_window,
+            active_window, battery_status, open_pet_window,
             secret_set, secret_get, secret_delete, capafy_get, capafy_post, relay_send, relay_reconnect
         ])
         .setup(|app| {

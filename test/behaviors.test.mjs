@@ -63,9 +63,22 @@ console.log('behaviors tests passed');
   b4.setPerch(false); assert.equal(b4.mode, 'idle'); console.log('perch ok'); }
 
 // typing: a pet without a `typing` action nods; throttled to one nod per 1.5s
-{ const played2 = []; const eng2 = { hover: false, sleeping: false, state: { action: 'idle' }, m: { actions: { nod: {} } }, play: (id) => played2.push(id) };
+{ const played2 = []; const eng2 = { hover: false, sleeping: false, state: { action: 'idle' }, m: { actions: { nod: {} } }, play: (id) => { played2.push(id); return true; } };
   const b5 = new Behaviors({ getWin: () => win, getMonitor: () => mon, getCursor: () => null, engine: eng2, say: () => {}, expr: () => {}, play: () => {}, line: () => null, t: () => I18N.pick('en') });
-  clock += 10; b5.onTyping(3); b5.onTyping(3); assert.deepEqual(played2, ['nod'], 'nods once via fallback');
-  clock += 2; b5.onTyping(2); assert.equal(played2.length, 2, 'nods again after the throttle');
+  clock += 10; b5.onTyping(1); b5.onTyping(1); assert.deepEqual(played2, ['nod'], 'one detected key triggers a nod via fallback');
+  clock += 2; b5.onTyping(1); assert.equal(played2.length, 2, 'nods again after the throttle');
   eng2.m.actions.typing = {}; clock += 2; b5.onTyping(4); assert.equal(played2.at(-1), 'typing', 'uses the dedicated action when present');
+  eng2.sleeping = true; clock += 2; b5.onTyping(3); assert.equal(played2.length, 3, 'does not nod while asleep');
   console.log('typing ok'); }
+
+// Two consecutive fast typing seconds trigger an extra reaction without recording any typed characters.
+{ const reactions = [], speech = [];
+  const eng = { hover: false, sleeping: false, state: { action: 'idle' }, m: { actions: {} }, play: () => true };
+  const b = new Behaviors({ getWin: () => win, getMonitor: () => mon, getCursor: () => null, engine: eng,
+    say: x => speech.push(x), expr: x => reactions.push(x), play: x => reactions.push(x), line: k => k === 'typingFast' ? '快打！' : null, t: () => I18N.pick('en') });
+  clock += 2; b.onTyping(7); clock += 1; b.onTyping(7);
+  assert.ok(reactions.includes('shake') && reactions.includes('surprised'));
+  assert.deepEqual(speech, ['快打！']);
+  clock += 3; b.onTyping(0); clock += 1; b.onTyping(7);
+  assert.equal(speech.length, 1, 'pause resets fast streak');
+  console.log('fast typing reaction ok'); }

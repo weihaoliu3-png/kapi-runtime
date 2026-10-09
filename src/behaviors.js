@@ -17,7 +17,7 @@
     constructor(host) {
       this.h = host; this.mode = 'idle'; // idle | fly | cling | peek | walk | perch
       this.v = { x: 0, y: 0 }; this.target = null; this.flip = false; this.lastPerchRect = null;
-      this.typing = { count: 0, lastNod: 0 }; this.lastLowBattery = 0; this.lastGreet = {};
+      this.typing = { count: 0, lastNod: 0, fastStreak: 0, lastBurst: -Infinity, lastTick: 0 }; this.lastLowBattery = 0; this.lastGreet = {};
       this.wanderAt = performance.now() / 1000 + 90 + Math.random() * 120; this.clingUntil = 0;
     }
 
@@ -86,11 +86,21 @@
     // ---------- typing / battery / greeting ----------
     onTyping(keys) {
       const t = performance.now() / 1000; this.typing.count += keys;
-      // 80ms polling misses some presses, so 2+ in a second already means "typing". Pets without a dedicated `typing`
-      // action nod (v0.7.0 played a non-existent 'typing' and nothing happened — the "typing nod does not work" report).
-      if (keys >= 2 && t - this.typing.lastNod > 1.5 && this.h.engine.state.action === 'idle') {
-        this.typing.lastNod = t; const acts = (this.h.engine.m && this.h.engine.m.actions) || {};
-        this.h.engine.play(acts.typing ? 'typing' : 'nod', global.PET_PRIORITY.random);
+      if (t - this.typing.lastTick > 1.6) this.typing.fastStreak = 0;
+      this.typing.lastTick = t;
+      this.typing.fastStreak = keys >= 6 ? this.typing.fastStreak + 1 : 0;
+      if (this.typing.fastStreak >= 2 && t - this.typing.lastBurst >= 8 && !this.h.engine.sleeping) {
+        this.typing.lastBurst = t;
+        this.h.expr('surprised', 1200);
+        this.h.play('shake');
+        const line = this.h.line('typingFast'); if (line) this.h.say(line);
+      }
+      // One detected press is enough: the 80ms global-input poll can miss fast press/release pairs.
+      // The engine supplies a visible procedural typing nod when the pet has no dedicated typing action.
+      if (keys > 0 && t - this.typing.lastNod >= 1.5 && !this.h.engine.sleeping && this.h.engine.state.action === 'idle') {
+        const acts = (this.h.engine.m && this.h.engine.m.actions) || {};
+        const action = acts.typing ? 'typing' : (acts.nod ? 'nod' : null);
+        if (action && this.h.engine.play(action, global.PET_PRIORITY.random)) this.typing.lastNod = t;
       }
       if (this.typing.count > 400) { this.typing.count = 0; this.h.say(this.h.line('typingLong') || this.h.t().beh.typingLong); }
     }

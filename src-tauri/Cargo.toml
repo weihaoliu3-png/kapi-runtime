@@ -1,6 +1,6 @@
 [package]
 name = "kapi"
-version = "0.8.0"
+version = "0.8.8"
 description = "Kapi desktop pet runtime"
 edition = "2021"
 

@@ -39,6 +39,13 @@ clock += 1; e.click(0.3); assert.equal(e.state.action, 'nod'); assert.equal(said
 for (let i = 0; i < 60; i++) { clock += 0.05; e.update(); }
 assert.equal(e.state.action, 'idle', 'nod finishes');
 
+// A package without a custom typing animation gets a visible two-beat nod.
+assert.equal(e.m.actions.typing.preset, 'typing');
+e.play('typing'); clock += 0.175;
+assert.ok(e.frame().dy >= 13, 'typing nod moves far enough to be visible after display scaling');
+for (let i = 0; i < 20; i++) { clock += 0.05; e.update(); }
+assert.equal(e.state.action, 'idle', 'typing nod finishes');
+
 // wave sequence walks all 8 steps then returns to idle
 e.play('wave'); const seen = [];
 for (let i = 0; i < 60; i++) { clock += 0.1; e.update(); const f = e.frame(); seen.push(f.layers.at(-1).img.name); if (e.state.action === 'idle') break; }

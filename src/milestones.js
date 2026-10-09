@@ -6,8 +6,8 @@
   'use strict';
 
   const DEFAULTS = [
-    { id: 'clickTea',   event: 'click',  count: 10, windowSec: 15, cooldownSec: 600, effect: 'bubbleTea', say: 'clickTea' },
-    { id: 'strokeLove', event: 'stroke', count: 5,  windowSec: 0,  cooldownSec: 600, effect: 'hearts',    say: 'strokeLove' },
+    { id: 'clickTea',   event: 'click',  count: 10, windowSec: 15, cooldownSec: 0, effect: 'bubbleTea', say: 'clickTea' },
+    { id: 'strokeLove', event: 'stroke', count: 5,  windowSec: 0,  cooldownSec: 0, effect: 'hearts',    say: 'strokeLove' },
     { id: 'flowers5',   event: 'flower', count: 5,  windowSec: 0,  cooldownSec: 0,   effect: 'petals',    say: 'garden' },
   ];
 

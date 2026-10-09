@@ -1,0 +1,329 @@
+{
+  "schema": 2,
+  "id": "kapi-a7f94c",
+  "name": "卡皮",
+  "version": 11,
+  "createdAt": "2026-10-08",
+  "updatedAt": "2026-10-09",
+  "source": {
+    "type": "photo",
+    "consent": true,
+    "style": "photo",
+    "cropped": true
+  },
+  "render": {
+    "canvas": [
+      768,
+      960
+    ],
+    "anchor": [
+      384,
+      930
+    ],
+    "displayHeight": 320,
+    "pixelated": false
+  },
+  "layers": {
+    "base": "layers/base.png",
+    "ref": "layers/ref.png",
+    "expressions": {
+      "happy": "layers/happy.png",
+      "sleepy": "layers/sleepy.png",
+      "angry": "layers/angry.png",
+      "sad": "layers/sad.png",
+      "surprised": "layers/surprised.png",
+      "shy": "layers/shy.png"
+    },
+    "blink": "layers/blink.png"
+  },
+  "lookFollow": {
+    "mode": "frames8",
+    "deadzonePx": 60,
+    "radiusPx": 600,
+    "crossfadeMs": 220,
+    "holdMs": 250
+  },
+  "actions": {
+    "idle": {
+      "type": "procedural",
+      "preset": "breathe"
+    },
+    "drag": {
+      "type": "procedural",
+      "preset": "sway"
+    },
+    "dragWiggle": {
+      "type": "procedural",
+      "preset": "dragWiggle"
+    },
+    "drop": {
+      "type": "procedural",
+      "preset": "bounce"
+    },
+    "nod": {
+      "type": "procedural",
+      "preset": "nod"
+    },
+    "shake": {
+      "type": "procedural",
+      "preset": "shake"
+    },
+    "wave": {
+      "type": "frames",
+      "dir": "actions/wave",
+      "frames": 90,
+      "fps": 24,
+      "tweenMs": 0,
+      "allowLook": false,
+      "ext": "webp",
+      "sequence": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        87,
+        88,
+        89
+      ],
+      "loops": 1
+    },
+    "eat": {
+      "type": "frames",
+      "dir": "actions/eat",
+      "frames": 4,
+      "allowLook": false,
+      "fps": 4,
+      "sequence": [
+        0,
+        1,
+        2,
+        2,
+        3
+      ],
+      "tweenMs": 150,
+      "loops": 1
+    },
+    "drink": {
+      "type": "frames",
+      "dir": "actions/drink",
+      "frames": 4,
+      "allowLook": false,
+      "fps": 4,
+      "sequence": [
+        0,
+        1,
+        2,
+        1,
+        3
+      ],
+      "tweenMs": 150,
+      "loops": 1
+    },
+    "sleep": {
+      "type": "frames",
+      "dir": "actions/sleep",
+      "frames": 4,
+      "allowLook": false,
+      "fps": 2,
+      "sequence": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "tweenMs": 300,
+      "loops": 1,
+      "holdLast": true,
+      "wake": [
+        2,
+        1,
+        0
+      ]
+    }
+  },
+  "effects": {
+    "bubbleTea": {
+      "type": "videoFrames",
+      "dir": "effects/bubbleTea",
+      "frames": 41,
+      "fps": 18,
+      "ext": "webp",
+      "sourceVideoSha256": "626004B54EFCCD925DF6D79DFF8F9054A827959F301D50D8B2FBA81AE532249C",
+      "provider": "vidu",
+      "alphaRevision": "pearl-mask-v11"
+    }
+  },
+  "triggers": {
+    "click": {
+      "action": "nod",
+      "say": "click"
+    },
+    "dragStart": {
+      "action": "dragWiggle",
+      "say": "dragStart"
+    },
+    "dragEnd": {
+      "action": "drop",
+      "say": "dragEnd"
+    },
+    "chatWait": {
+      "action": "idle"
+    },
+    "chatReply": {
+      "action": "nod"
+    },
+    "idleRandom": [
+      {
+        "action": "wave",
+        "weight": 2,
+        "cooldownSec": 120
+      }
+    ],
+    "idleRandomEverySec": [
+      40,
+      120
+    ],
+    "afterIdleMin": {
+      "minutes": 15,
+      "action": "sleep"
+    }
+  },
+  "runtime": {
+    "minVersion": "0.8.6"
+  },
+  "milestones": [
+    {
+      "id": "clickTea",
+      "event": "click",
+      "count": 10,
+      "windowSec": 15,
+      "cooldownSec": 0,
+      "effect": "bubbleTea",
+      "say": "clickTea"
+    },
+    {
+      "id": "strokeHeartV8",
+      "event": "stroke",
+      "count": 1,
+      "windowSec": 0,
+      "cooldownSec": 0,
+      "effect": "hearts",
+      "say": "strokeLove"
+    },
+    {
+      "id": "flowers5",
+      "event": "flower",
+      "count": 5,
+      "windowSec": 0,
+      "cooldownSec": 0,
+      "effect": "petals",
+      "say": "garden"
+    }
+  ],
+  "garden": {
+    "stagesSec": [
+      8,
+      25,
+      50,
+      90
+    ],
+    "showMax": 5,
+    "style": "daisy",
+    "color": "#ff7aa2"
+  },
+  "build": 12,
+  "voice": {
+    "kind": "tts",
+    "dir": "voice",
+    "provider": "openai",
+    "model": "gpt-4o-mini-tts",
+    "voice": "nova",
+    "preset": "female",
+    "pitch": 6.0,
+    "speed": 1.2
+  },
+  "delivered": 11
+}
