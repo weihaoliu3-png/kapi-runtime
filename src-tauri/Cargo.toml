@@ -1,6 +1,6 @@
 [package]
 name = "kapi"
-version = "0.8.8"
+version = "0.8.9"
 description = "Kapi desktop pet runtime"
 edition = "2021"
 
@@ -14,7 +14,6 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "protocol-asset", "image-png", "macos-private-api"] }
 tauri-plugin-dialog = "2"
-tauri-plugin-http = "2"
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -22,10 +21,6 @@ zip = "2"
 active-win-pos-rs = "0.9"
 battery = "0.7"
 device_query = "3"
-keyring = { version = "3", features = ["apple-native", "windows-native"] }
-reqwest = { version = "0.12", features = ["json", "stream"] }
-futures-util = "0.3"
-uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
 
 [profile.release]

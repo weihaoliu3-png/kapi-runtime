@@ -130,5 +130,29 @@
     });
   }
 
-  global.KapiFx = { play, playVideoFrames, planThrow, planPearls };
+  /**
+   * Concurrency policy for timed effects: `queue-one`. One effect plays at a time; while it plays, at most ONE
+   * further request is kept (the newest wins) and starts after the current one finishes. More requests only count
+   * for the milestone / mood — they never stack a second set of particles on the canvas. clear() drops everything
+   * (pet switch, hide, quit). Pure: `run(effect, m)` is the host's async player; done() awaits it.
+   */
+  class Queue {
+    constructor(run) { this.run = run; this.playing = null; this.pending = null; this.alive = 0; this.maxAlive = 0; }
+    request(effect, m) {
+      if (this.playing) { this.pending = { effect, m }; return 'queued'; }
+      this._start(effect, m); return 'started';
+    }
+    _start(effect, m) {
+      this.playing = { effect, m }; this.alive++; this.maxAlive = Math.max(this.maxAlive, this.alive);
+      const done = () => {
+        this.alive--; this.playing = null;
+        const n = this.pending; this.pending = null;
+        if (n) this._start(n.effect, n.m);
+      };
+      Promise.resolve().then(() => this.run(effect, m)).then(done, done);
+    }
+    clear() { this.pending = null; }
+  }
+
+  global.KapiFx = { play, playVideoFrames, planThrow, planPearls, Queue };
 })(typeof window !== 'undefined' ? window : globalThis);

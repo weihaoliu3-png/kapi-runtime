@@ -29,7 +29,6 @@
     "core:tray:default",
     "core:path:default",
     "dialog:default",
-    "http:default",
     "opener:default",
     "opener:allow-open-path",
     "opener:allow-reveal-item-in-dir"

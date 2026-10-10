@@ -1,58 +1,21 @@
 <!doctype html><html><head><meta charset="utf-8"><title>Kapi</title>
 <style>body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;padding:18px 22px;color:#2c2b29;background:#f6f3ee;font-size:13px}
 h3{margin:0 0 6px;font-size:14px}label{display:block;margin:12px 0 4px}input,select{width:100%;box-sizing:border-box;padding:8px;border:1px solid #d9d3ca;border-radius:8px;font-size:13px}
-button{margin-top:12px;margin-right:8px;padding:8px 16px;border:0;border-radius:8px;background:#d1775a;color:#fff;font-size:13px;cursor:pointer}button.sec{background:#e7dfd4;color:#2c2b29}
-small{color:#7e7972;display:block;margin-top:8px;line-height:1.5}#status{margin-top:10px;padding:8px 10px;border-radius:8px;background:#efe8dd;min-height:18px}#status.ok{background:#dcefdc}#status.err{background:#f5d9d6}
-.warn{background:#fff3d6;border:1px solid #f0d28a;padding:8px 10px;border-radius:8px;margin-top:8px;line-height:1.5}</style>
-<script src="i18n.js"></script><script src="connect.js"></script></head>
+button{margin-top:12px;margin-right:8px;padding:8px 16px;border:0;border-radius:8px;background:#d1775a;color:#fff;font-size:13px;cursor:pointer}
+small{color:#7e7972;display:block;margin-top:8px;line-height:1.5}</style>
+<script src="i18n.js"></script></head>
 <body>
-<h3 id="hChat"></h3>
-<div id="connected" style="display:none"><div id="status" class="ok"></div><button id="disconnect" class="sec"></button></div>
-<div id="setup">
-  <div class="warn" id="risk"></div>
-  <label id="lUrl"></label><input id="url" placeholder="https://capafy.ai/conversations?id=…">
-  <label id="lToken"></label><input id="token" type="password" autocomplete="off">
-  <div id="pick" style="display:none"><label id="lPick"></label><select id="instances"></select></div>
-  <button id="test"></button>
-  <div id="status"></div>
-</div>
-<h3 id="hDisplay" style="margin-top:22px"></h3>
+<h3 id="hDisplay"></h3>
 <label id="lScale"></label><input id="scale" type="number" step="0.25" min="0.25" max="3">
 <button id="save"></button>
 <script>
 (async()=>{
-  const T=I18N.pick(new URLSearchParams(location.search).get('lang')||''); const C=T.connect; document.title=T.settings.title;
-  for (const [id,txt] of Object.entries({hChat:C.title,risk:C.risk,lUrl:C.url,lToken:C.token,lPick:C.pick,test:C.test,disconnect:C.disconnect,hDisplay:C.display,lScale:T.settings.scale,save:T.settings.save})) document.getElementById(id).textContent=txt;
+  const T=I18N.pick(new URLSearchParams(location.search).get('lang')||''); document.title=T.settings.title;
+  for (const [id,txt] of Object.entries({hDisplay:T.settings.display,lScale:T.settings.scale,save:T.settings.save})) document.getElementById(id).textContent=txt;
   const Ta=window.__TAURI__; const {invoke}=Ta.core; const path=await invoke('settings_path'); let s={};
   try{s=JSON.parse(await invoke('read_text',{path}))}catch(e){}
   document.getElementById('scale').value=s.scale??1;
-  const statusEl=()=>document.querySelector(s.instanceId?'#connected #status':'#setup #status');
-  function render(){ document.getElementById('connected').style.display=s.instanceId?'block':'none'; document.getElementById('setup').style.display=s.instanceId?'none':'block';
-    if(s.instanceId) document.querySelector('#connected #status').textContent=C.connectedTo(s.instanceId); if(s.url) document.getElementById('url').value=s.url; }
-  render();
-  const setStatus=(msg,cls)=>{const el=document.querySelector('#setup #status'); el.textContent=msg; el.className=cls||'';};
-  let instances=[];
-  document.getElementById('test').onclick=async()=>{
-    const url=document.getElementById('url').value.trim(); const token=document.getElementById('token').value.trim();
-    if(!token){setStatus(C.needToken,'err');return;}
-    setStatus(C.checking,'');
-    const acc=await invoke('capafy_get',{path:'/agent/account',token}).catch(e=>({status:0,body:String(e)}));
-    if(acc.status!==200){setStatus(acc.status===401?C.badToken:C.netErr(acc.status),'err');return;}
-    const inst=await invoke('capafy_get',{path:'/agent/instance?status=active',token}).catch(e=>({status:0,body:String(e)}));
-    if(inst.status!==200){setStatus(C.netErr(inst.status),'err');return;}
-    instances=(inst.body&&(inst.body.instances||inst.body.data||inst.body))||[]; if(!Array.isArray(instances)) instances=[];
-    const cands=Connect.extractCandidates(url); const m=Connect.matchInstance(cands,instances);
-    if(m.instanceId){ await finish(m.instanceId,token,url); return; }
-    if(!instances.length){setStatus(C.noInstances,'err');return;}
-    const sel=document.getElementById('instances'); sel.innerHTML=instances.map(i=>`<option value="${i.instanceId}">${(i.name||i.title||i.skillName||i.instanceId)} · ${i.instanceId}</option>`).join('');
-    document.getElementById('pick').style.display='block'; setStatus(cands.length?C.noMatch:C.parseFail,'err');
-    document.getElementById('test').textContent=C.useSelected; document.getElementById('test').onclick=async()=>finish(sel.value,token,url);
-  };
-  async function finish(instanceId,token,url){ await invoke('secret_set',{key:'capafy_token',value:token}); s.instanceId=instanceId; s.url=url; s.connectedAt=Date.now(); delete s.token;
-    await invoke('write_text',{path,content:JSON.stringify(s,null,2)}); document.getElementById('token').value=''; render(); await Ta.event.emit('settings-changed',{}); }
-  document.getElementById('disconnect').onclick=async()=>{ await invoke('secret_delete',{key:'capafy_token'}); delete s.instanceId; delete s.url; delete s.connectedAt;
-    await invoke('write_text',{path,content:JSON.stringify(s,null,2)}); render(); await Ta.event.emit('settings-changed',{}); };
-  document.getElementById('save').onclick=async()=>{ s.scale=parseFloat(document.getElementById('scale').value)||1; delete s.token;
+  document.getElementById('save').onclick=async()=>{ s.scale=parseFloat(document.getElementById('scale').value)||1; for (const k of ['token','apiBase','instanceId','url','connectedAt']) delete s[k];
     await invoke('write_text',{path,content:JSON.stringify(s,null,2)}); await Ta.event.emit('settings-changed',{}); Ta.window.getCurrentWindow().close(); };
 })();
 </script></body></html>

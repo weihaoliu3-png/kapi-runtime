@@ -71,9 +71,18 @@
         if (!this.img.look || !this.img.look[target]) target = 'base'; else this.look.sectorIdx = idx;
       } else this.look.sectorIdx = -1;
       const t = this.now();
-      if (target !== this.look.target && t - this.look.lastChange >= (lf.holdMs || 400) / 1000) {
+      if (target !== this.look.target && t - this.look.lastChange >= (lf.holdMs || 150) / 1000) {
+        // never jump over a direction: a fast cursor that crossed several sectors is followed one neighbour per hold,
+        // along the shorter way round, so every change is an adjacent-frame crossfade (base <-> any direction is direct)
+        let next = target;
+        const ci = DIRS.indexOf(this.look.current), ti = DIRS.indexOf(target);
+        if (ci >= 0 && ti >= 0 && ci !== ti) {
+          let d = ((ti - ci) % 8 + 8) % 8; if (d > 4) d -= 8;                 // -3..4 steps, shortest way
+          next = DIRS[(ci + Math.sign(d) + 8) % 8];
+          if (!this.img.look || !this.img.look[next]) next = target;
+        }
         this.look.fadeFrom = this.look.current; this.look.fadeT0 = t;
-        this.look.target = target; this.look.current = target; this.look.lastChange = t;
+        this.look.target = next; this.look.current = next; this.look.lastChange = t;
       }
     }
 
@@ -233,7 +242,7 @@
       const lf = this.m.lookFollow || {};
       const cands = [];
       if (this.look.fadeFrom && this.look.fadeFrom !== this.look.current && s.action === 'idle')
-        cands.push({ kind: 'look', img: this._lookImg(this.look.fadeFrom), t0: this.look.fadeT0, ms: lf.mode === 'ring' ? (lf.crossfadeMs || 90) : Math.max(220, lf.crossfadeMs || 0) });
+        cands.push({ kind: 'look', img: this._lookImg(this.look.fadeFrom), t0: this.look.fadeT0, ms: lf.mode === 'ring' ? (lf.crossfadeMs || 90) : Math.max(220, lf.crossfadeMs || 260) });
       if (this.transitionFrom && this.transitionFrom !== cur)
         cands.push({ kind: 'trans', img: this.transitionFrom, t0: this.transitionT0, ms: Math.max(a.tweenMs || 0, 120) });
       if (a.type === 'frames') {

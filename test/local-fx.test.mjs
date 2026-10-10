@@ -8,7 +8,7 @@ assert.match(html, /<canvas id="fx"/);
 assert.match(html, /#fx \{[^}]*pointer-events: none/);
 assert.match(html, /<script src="effects\.js"><\/script>/);
 assert.match(main, /KapiFx\.play\(fxCtx, fxCanvas\.width/);
-assert.match(main, /effect === 'bubbleTea'[\s\S]*KapiFx\.playVideoFrames\(/);
+assert.match(main, /BUILTIN_FX = \{ bubbleTea[\s\S]*KapiFx\.playVideoFrames\(/, 'bubble tea plays real frames: the package\'s own, else the runtime\'s built-in set');
 assert.doesNotMatch(main, /open_fx_window|fx-ready|fx-play/);
 assert.doesNotMatch(rust, /fn open_fx_window/);
 

@@ -1,6 +1,6 @@
 # Kapi运行器
 
-桌宠的桌面程序（Mac / Windows）。加载 `capafy-deskpet` skill 产出的宠物包（`.petpack`），负责透明窗口、穿透、拖拽、8 朝向跟随、眨眼、关键帧动画、气泡、对话、提醒、托盘。规格以 skill 里的 `references/runtime-contract.md` 和 `pet-package-contract.md` 为准。
+桌宠的桌面程序（Mac / Windows）。加载 `capafy-deskpet` skill 产出的宠物包（`.petpack`），负责透明窗口、穿透、拖拽、目光跟随、眨眼、动画、气泡、提醒、托盘。规格以 skill 里的 `references/runtime-contract.md` 和 `pet-package-contract.md` 为准。
 
 技术：Tauri 2 + 原生 JS（`src/engine.js` 纯逻辑、`src/main.js` 平台胶水）+ 极少 Rust（`src-tauri/src/lib.rs`：列宠物、读写文本、解压/打包 .petpack、托盘）。
 
@@ -28,6 +28,17 @@ npm run build         # 产出 src-tauri/target/release/bundle/…
 - 朝向切换迟滞（死区 ±25%、扇区边界 8°）+ holdMs 400 + crossfade 180，消除交界处抖动。
 - 首次启动操作提示气泡。
 - 原图不再上屏：宠物包 `layers.base` 必须是生成帧。
+
+## v0.8.9 修复（小耳机 v3 复盘）
+
+- **聊天框 / 气泡不再压住头顶的花**（`src/care-layout.js` `stack` + `main.js` `layoutTop`）：打开聊天或冒气泡时，从舞台画布的 alpha 实测"画面最高到哪"（人物 + 头顶花 + 任何道具），气泡、输入框按"内容顶 → 气泡 → 输入框"叠成一列，彼此留 12 px；窗口上方不够就像照顾面板一样向上扩窗（脚底屏幕位置不动）；已经顶到显示器上沿时输入框改放到脚下。
+- **花瓣 / 爱心不再叠加**（`src/effects.js` `Queue`，策略 `queue-one`）：同一时刻画布上只有一组特效；播放中再触发只保留最新的一次等着，播完再放；更多触发只计数不排队；切宠物 / 隐藏时清空。奶茶同策略。
+- **目光跟随不跨方向**（`src/engine.js`）：鼠标一下越过几个扇区时，按最短路径一格一格走（每格一个 `holdMs`），每次切换都是相邻帧淡化；默认 `holdMs` 150（原 400）、`crossfadeMs` 260（原 180）。方向图和待机底图不一致（身子被重画）才是跳帧的主因，这由 skill 侧"只移植眼睛"解决。
+- **桌宠自己告诉用户"还能教我"**：首次提示多一行；右键「带它去学新东西」改成「教我新东西 / 实现你的想法」；动作子菜单为空时显示「去教我一个你自己想的动作」；导入同一只的新版本后说"我学会新东西啦，下次还可以继续教我"（宠物包 `lines.learnedNew` 可覆盖）；空闲很久偶尔（≥25 分钟一次、35% 概率）说一句"你想象中的动作我也能学"（`lines.teachHint` 可覆盖）。
+- **特效按 id 通用**：`pet.json.effects.<任意id>`（videoFrames）都能被里程碑引用并播放，`bubbleTea` 只是第一个；里程碑可带 `action` 指定播放时的动作。新动作 / 新触发 / 新特效 / 新台词都只改宠物包，不用重新编译运行器（见 skill `runtime-contract.md`「不用编译就能扩展的空间」）。
+- **聊天功能移除**（见文末）：双击 = 照顾面板。
+- **奶茶是内置基础效果**：运行器自带一套真视频奶茶帧（`src/fx/bubbleTea/`，41 帧 18 fps 无损 WebP，2026-10-10 绿幕重拍版，原视频 SHA-256 4ABB968D…53EB36；画面里只有杯子和珍珠，不含任何角色），所有桌宠连点 10 下都扔这一杯；宠物包带自己的 `effects.bubbleTea` 时覆盖它。真帧加载失败才退回程序画的杯子。不再报"奶茶视频帧缺失"。
+- 单测：`test/fx-queue.test.mjs`、`care-layout.test.mjs`（叠放）、`engine.test.mjs`（相邻过渡）。历次交接便条移到 `docs/history/`。
 
 ## v0.8 互动里程碑 / 局部特效 / 打字种花
 
@@ -95,10 +106,6 @@ Mac 上 `device_query` 读键盘可能需要"输入监控"权限；没授权时�
 - 系统级"无操作"用的是光标是否移动，不是真正的系统空闲时间。
 - 没有像素级"摸头手势"、自主走动、多宠互动（见 skill 的 growth-menu.md ◇ 项）。
 
-## 聊天：复用当前 Capafy 对话实例（v0.5，按《桌宠对话连接方案》）
+## 聊天功能已移除（0.8.9）
 
-- 设置页：用户粘贴本对话完整网址 + Capafy Token → `GET /agent/account` 验 Token → `GET /agent/instance?status=active` → 网址候选 ID 与 `instances[].instanceId` 精确比对；不匹配则列出实例让用户选。连接测试不发消息。
-- Token 只存系统凭据库（`keyring`：macOS Keychain / Windows Credential Manager），不进 settings.json、宠物包、日志。「断开连接」同时删凭据和 instanceId。
-- 发送：`POST https://api.capafy.ai/agent/relay/instances/{id}/messages`，content = `[petchat]\n用户消息：…\n本地时间…\n桌宠上一动作…\n可用动作…\n可用表情…`；SSE 按 seq 合并，`done` 结束，`timeout` 提示；同一实例同时只一个请求，其余排队。
-- 错误：401 重填 Token / 404 没找到对话 / 409 "我还在想上一句" / 429 退避 / 额度类业务错误提示续费 / 其他 "还没连上"。
-- 只允许固定域名 `api.capafy.ai`，不从粘贴的网址继承主机。
+桌宠不再连接对话实例：用户在桌面上随口说一句"你好"就消耗一次请求，这个逻辑不成立。`connect.js`、设置里的连接页、Rust 的 relay / keychain 命令和 `reqwest / keyring / tauri-plugin-http` 依赖全部删除；双击桌宠改为打开照顾面板。桌宠说的话只来自宠物包里的台词（`persona.lines`）。以后要做聊天，先定计费方式再加回来。

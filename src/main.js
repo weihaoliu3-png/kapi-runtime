@@ -1,4 +1,4 @@
-// Kapi runtime glue: Tauri window, hit-testing, drag, look-follow polling, bubbles, chat, tray, settings.
+// Kapi runtime glue: Tauri window, hit-testing, drag, look-follow polling, bubbles, tray, settings.
 (async function () {
   'use strict';
   const TAURI = window.__TAURI__;
@@ -14,8 +14,6 @@
   const whipCanvas = document.getElementById('whip');
   const whipCtx = whipCanvas.getContext('2d');
   const bubble = document.getElementById('bubble');
-  const chat = document.getElementById('chat');
-  const chatInput = document.getElementById('chatInput');
   const toastEl = document.getElementById('toast');
   const pawEl = document.getElementById('paw');
   const careEl = document.getElementById('care');
@@ -24,7 +22,19 @@
   const t = () => T;
   let currentOutfit = 'default';
   let beh = null, winRect = null, monRect = null, cursorLogical = null, perchTimer = null, batteryTimer = null, rectTimer = null;
-  let milestones = null, garden = null, props = { cup: null, flowers: {} }, videoFx = {}, interState = null, fxAbort = null, fxRun = 0;
+  let milestones = null, garden = null, props = { cup: null, flowers: {} }, videoFx = {}, interState = null, fxAbort = null, fxRun = 0, fxQueue = null;
+  // Built-in real-video effects shipped with the runtime (src/fx/<id>/000..N.webp): every pet has them; a package may
+  // override one with its own effects.<id>. Loaded on first use, kept for the session.
+  const BUILTIN_FX = { bubbleTea: { type: 'videoFrames', frames: 41, fps: 18, ext: 'webp' } };
+  const builtinFxCache = {};
+  function loadBuiltinFx(id) {
+    if (builtinFxCache[id]) return builtinFxCache[id];
+    const spec = BUILTIN_FX[id];
+    builtinFxCache[id] = Promise.all(Array.from({ length: spec.frames }, (_, i) => new Promise((res) => {
+      const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = `fx/${id}/${String(i).padStart(3, '0')}.${spec.ext}`;
+    })));
+    return builtinFxCache[id];
+  }
   let ctrlHeld = false, whipPrev = null, whipOver = false, whipArmed = true, whipDistance = 0, whipDirection = 0, whipMarks = [];
   const isMain = win.label === 'pet';
   const wantedPetId = new URLSearchParams(location.search).get('pet');
@@ -44,12 +54,12 @@
   const BASE_PAD_TOP = 130, PAD_SIDE = 60;
   let PAD_TOP = BASE_PAD_TOP;
   let careWanted = false, careLayoutTask = Promise.resolve();
-  let settings = { instanceId: '', url: '', scale: 1, activePetId: '', muted: false, alwaysOnTop: true };
+  let settings = { scale: 1, activePetId: '', muted: false, alwaysOnTop: true };
   let settingsFile = '';
   let pets = [], pet = null, engine = null, scale = 1, dispW = 0, dispH = 0, hidden = false;
   let lastCursor = null, lastCursorMove = 0, dragging = false, dragStartCursor = null, dragStartWin = null, dragMoved = false, mouseDownAt = 0;
   let prevCursorForV = null, prevT = 0, lastHitVisible = true, bubbleTimer = null, bubbleSticky = false, dragV = { x: 0, y: 0, t: 0 };
-  let chatHistory = [], reminderState = {};
+  let reminderState = {};
 
   // ---------- helpers ----------
   const toast = (msg, ms = 2500) => { toastEl.textContent = msg; toastEl.style.display = 'block'; clearTimeout(toastEl._t); toastEl._t = setTimeout(() => toastEl.style.display = 'none', ms); };
@@ -65,7 +75,7 @@
     settingsFile = await invoke('settings_path');
     try { Object.assign(settings, JSON.parse(await invoke('read_text', { path: settingsFile }))); } catch (_) {}
   }
-  async function saveSettings() { try { delete settings.token; delete settings.apiBase; await invoke('write_text', { path: settingsFile, content: JSON.stringify(settings, null, 2) }); } catch (_) {} }
+  async function saveSettings() { try { for (const k of ['token', 'apiBase', 'instanceId', 'url', 'connectedAt']) delete settings[k]; await invoke('write_text', { path: settingsFile, content: JSON.stringify(settings, null, 2) }); } catch (_) {} }
 
   // ---------- pet loading ----------
   async function loadPet(info) {
@@ -78,6 +88,11 @@
     const want = stateOutfit || (manifest.outfits && manifest.outfits.current) || 'default';
     const L = (want !== 'default' && items[want]) ? { ...items[want] } : { ...manifest.layers, look: 'look' };
     currentOutfit = (want !== 'default' && items[want]) ? want : 'default';
+    // an outfit that carries its own 8 directions is followed with THOSE frames while worn, even if the default
+    // outfit uses a 48-frame ring (the ring was filmed in the default clothes) — 0.8.9
+    if (currentOutfit !== 'default' && L.look && manifest.lookFollow && manifest.lookFollow.mode === 'ring') {
+      manifest.lookFollow = { ...manifest.lookFollow, mode: 'frames8', holdMs: 150, crossfadeMs: 260 };
+    }
     const images = { base: await loadImage(join(info.dir, L.base)), blink: null, look: {}, actions: {} };
     if (L.blink) images.blink = await loadImage(join(info.dir, L.blink));
     images.expressions = {};
@@ -109,7 +124,7 @@
     if (pr.cup) props.cup = await loadImage(join(info.dir, pr.cup));
     for (const k of ['1', '2', '3']) if (pr['flower' + k]) props.flowers[k] = await loadImage(join(info.dir, pr['flower' + k]));
     pet = { ...info, manifest, persona };
-    T = I18N.pick(persona.language); chatInput.placeholder = T.chatPlaceholder;
+    T = I18N.pick(persona.language);
     await loadVoiceIndex();
     engine = new PetEngine({ manifest, persona, images }, {
       onSay: (text, sticky) => say(text, sticky),
@@ -128,6 +143,7 @@
     if (isMain) { settings.activePetId = info.id; await saveSettings(); }
     greet();
     setupReminders();
+    setupTeachHints();
     if (!settings.hintShown) { setTimeout(() => say(T.hint, true), 2500); settings.hintShown = true; await saveSettings(); }
   }
 
@@ -139,7 +155,11 @@
     const save = () => { if (care) care.host.save(care.s); else invoke('write_text', { path: stateFile, content: JSON.stringify(st) }).catch(() => {}); };
     const now = () => Date.now() / 1000;
     const lineOr = (key) => care.host.line(key) || (T.inter && T.inter[key]) || '';
-    milestones = new Milestones(pet.manifest.milestones, { now, state: st, save, say: (k) => say(lineOr(k)), fire: (effect, m) => playEffect(effect, m) });
+    // effects are `queue-one`: one on the canvas at a time, at most one waiting (see effects.js Queue)
+    if (fxQueue) fxQueue.clear();
+    if (fxAbort) fxAbort.abort();
+    fxQueue = new KapiFx.Queue((effect, m) => playEffect(effect, m));
+    milestones = new Milestones(pet.manifest.milestones, { now, state: st, save, say: (k) => say(lineOr(k)), fire: (effect, m) => fxQueue.request(effect, m) });
     garden = new Garden(pet.manifest.garden, { now, state: st, save, say: (k) => say(lineOr(k)), onPick: () => milestones.record('flower') });
   }
   /** Head anchor (window px): top-centre of the pet, where the flower sits; and hand anchor for the cup throw. */
@@ -163,21 +183,27 @@
     for (let i = 0; i < n; i++) draw(PAD_SIDE + dispW * (0.86 + i * 0.05), PAD_TOP + dispH, 3, 0.45);
     if (v.total > n) { ctx.font = `${Math.round(dispH * 0.06)}px sans-serif`; ctx.fillStyle = '#6a5'; ctx.textAlign = 'left'; ctx.fillText('+' + (v.total - n), PAD_SIDE + dispW * (0.86 + n * 0.05), PAD_TOP + dispH - dispH * 0.02); }
   }
-  /** Play the effect in a separate canvas inside the pet window; no fullscreen window is created. */
+  /** Play ONE effect in a separate canvas inside the pet window; no fullscreen window is created. Called by the
+   *  queue only, so two effects never overlap; a pet switch / resize aborts the running one through fxAbort. */
   async function playEffect(effect, m) {
-    // No interaction cooldown: a new milestone restarts any effect already playing.
     if (fxAbort) fxAbort.abort();
     const run = ++fxRun;
     const controller = new AbortController(); fxAbort = controller;
     try {
       const from = { x: PAD_SIDE + dispW * 0.58, y: PAD_TOP + dispH * 0.62 };
       const dir = 1;
-      if (effect === 'bubbleTea') { engine.play(pet.manifest.actions.throw ? 'throw' : (pet.manifest.actions.wave ? 'wave' : 'nod')); engine.flip = dir < 0; }
+      // any effect id declared in pet.json.effects as videoFrames plays its own frames; without frames the built-in
+      // procedural scene plays — bubbleTea included: every pet throws tea (drawn cup, or the pet's own props/cup.png),
+      // a real-video version in the package is an upgrade, never a precondition
+      let spec = pet.manifest.effects && pet.manifest.effects[effect];
+      let framesP = spec && spec.type === 'videoFrames' ? videoFx[effect] : null;
+      if (!framesP && BUILTIN_FX[effect]) { spec = BUILTIN_FX[effect]; framesP = loadBuiltinFx(effect); }   // the runtime's own real-video tea
+      const isVideo = !!framesP;
+      if (isVideo) { engine.play(pet.manifest.actions[m && m.action] ? m.action : (pet.manifest.actions.throw ? 'throw' : (pet.manifest.actions.wave ? 'wave' : 'nod'))); engine.flip = dir < 0; }
       else engine.showExpression('happy', 3000);
-      if (effect === 'bubbleTea') {
-        const spec = pet.manifest.effects && pet.manifest.effects.bubbleTea;
-        if (!spec || spec.type !== 'videoFrames' || !videoFx.bubbleTea) throw new Error('奶茶视频帧缺失，特效未播放');
-        const frames = await videoFx.bubbleTea;
+      let frames = null;
+      if (isVideo) { try { frames = await framesP; } catch (_) { frames = null; } }
+      if (frames && frames.length && !frames.some(f => !f)) {
         const extraTop = (PAD_TOP - BASE_PAD_TOP) * (window.devicePixelRatio || 1);
         await KapiFx.playVideoFrames(fxCtx, fxCanvas.width, fxCanvas.height, frames, spec.fps,
           { signal: controller.signal, viewport: { x: 0, y: extraTop, width: fxCanvas.width, height: fxCanvas.height - extraTop } });
@@ -214,26 +240,64 @@
   }
   function queueCareLayout(open) {
     careWanted = open;
-    careLayoutTask = careLayoutTask.then(() => careWanted === open ? layoutCare(open) : null)
-      .catch((e) => { careEl.style.visibility = ''; console.warn('care layout:', e); });
+    careLayoutTask = careLayoutTask.then(() => careWanted === open ? layoutTop() : null)
+      .catch((e) => { careEl.style.visibility = ''; console.warn('top layout:', e); });
     return careLayoutTask;
   }
   function openCare() { if (!care) return; care.renderPanel(careEl); careEl.style.visibility = 'hidden'; careEl.style.display = 'block'; return queueCareLayout(true); }
   function closeCare() { careEl.style.display = 'none'; careEl.style.visibility = ''; return queueCareLayout(false); }
-  async function layoutCare(open) {
-    const newPad = open ? CareLayout.topPadding(careEl.getBoundingClientRect().bottom) : BASE_PAD_TOP;
-    if (newPad !== PAD_TOP && pet) {
+  // ---- the space above the pet: one vertical stack (content top -> bubble), care card above all ----
+  // contentOverhang: how far the drawn content (pet, flower on its head, props) reaches ABOVE the pad line, measured
+  // from the stage canvas alpha (so a generated flower prop of any size counts), refreshed while an overlay is open.
+  let contentOverhang = 0, overhangAt = 0, topBlocked = false;
+  function measureOverhang() {
+    const dpr = window.devicePixelRatio || 1;
+    const rows = Math.min(canvas.height, Math.round((PAD_TOP + dispH * 0.5) * dpr));
+    if (rows <= 0 || canvas.width <= 0) return;
+    try {
+      const data = ctx.getImageData(0, 0, canvas.width, rows).data;
+      let top = -1;
+      for (let y = 0; y < rows && top < 0; y += 2) {
+        const row = y * canvas.width * 4;
+        for (let x = 3; x < canvas.width * 4; x += 16) if (data[row + x] > 25) { top = y; break; }
+      }
+      contentOverhang = top < 0 ? 0 : Math.max(0, PAD_TOP - top / dpr);
+    } catch (_) { contentOverhang = Math.max(contentOverhang, dispH * 0.26); }   // tainted canvas: assume a full-size flower
+    overhangAt = performance.now();
+  }
+  function overlayItems() {
+    const items = [];
+    if (bubble.style.display === 'block') items.push({ id: 'bubble', h: bubble.offsetHeight + 7 });
+    return items;
+  }
+  function requiredPad() {
+    let need = BASE_PAD_TOP;
+    if (careEl.style.display === 'block') need = Math.max(need, CareLayout.topPadding(careEl.getBoundingClientRect().bottom));
+    const items = overlayItems();
+    if (items.length) need = Math.max(need, CareLayout.stack(contentOverhang, items).needPad);
+    return need;
+  }
+  async function layoutTop() {
+    if (!pet) return;
+    if (overlayItems().length) measureOverhang();
+    const newPad = requiredPad();
+    topBlocked = false;
+    if (newPad !== PAD_TOP) {
       const sf = await win.scaleFactor();
       const oldPos = (await win.outerPosition()).toLogical(sf);
       const petTop = oldPos.y + PAD_TOP;
-      PAD_TOP = newPad;
-      await resizeStage();
       const mon = await currentMonitor();
       const monitorTop = mon ? mon.position.toLogical(sf).y : -Infinity;
-      await win.setPosition(new LogicalPosition(Math.round(oldPos.x), CareLayout.windowTop(petTop, PAD_TOP, monitorTop)));
-      await refreshRects();
+      if (newPad > PAD_TOP && CareLayout.blocked(petTop, newPad, monitorTop) && careEl.style.display !== 'block') {
+        topBlocked = true;                                   // no room above: overlays go beside / below instead (positionBubble)
+      } else {
+        PAD_TOP = newPad;
+        await resizeStage();
+        await win.setPosition(new LogicalPosition(Math.round(oldPos.x), CareLayout.windowTop(petTop, PAD_TOP, monitorTop)));
+        await refreshRects();
+      }
     }
-    if (open && careWanted) careEl.style.visibility = '';
+    if (careWanted && careEl.style.display === 'block') careEl.style.visibility = '';
   }
   careEl.addEventListener('click', (e) => {
     const b = e.target.closest('button[data-care]'); if (b) { care.do(b.dataset.care); care.renderPanel(careEl); queueCareLayout(true); return; }
@@ -342,9 +406,9 @@
         prevCursorForV = cp; prevT = t;
         return;
       }
-      // hit test against drawn pixels (pet body + bubble + chat)
+      // hit test against drawn pixels (pet body + bubble)
       const inWin = lx >= 0 && ly >= 0 && lx < canvas.clientWidth && ly < canvas.clientHeight;
-  const overUi = inWin && (isOver(bubble, lx, ly) || isOver(chat, lx, ly));
+      const overUi = inWin && isOver(bubble, lx, ly);
       const overPet = inWin && petAlphaAt(lx, ly) > 25;
       canvas.style.cursor = ctrlHeld && overPet ? 'url("whip-cursor.svg") 44 20, crosshair' : '';
       updateWhip(lx, ly, overPet);
@@ -398,7 +462,8 @@
     }
     else if (performance.now() - mouseDownAt < 400) { if (beh && beh.mode === 'peek') beh.unpeek(); else if (care && care.s.sleeping) care.wake(false); else { engine.click((e.clientY - PAD_TOP) / Math.max(1, dispH)); if (milestones) milestones.record('click'); } }
   });
-  canvas.addEventListener('dblclick', (e) => { if (petAlphaAt(e.clientX, e.clientY) > 25) openChat(); });
+  // double-click = the care panel (chat is not a feature: every message would cost the user a request)
+  canvas.addEventListener('dblclick', (e) => { if (petAlphaAt(e.clientX, e.clientY) > 25) (careEl.style.display === 'block' ? closeCare() : openCare()); });
   canvas.addEventListener('contextmenu', async (e) => { e.preventDefault(); if (petAlphaAt(e.clientX, e.clientY) > 25) await showMenu(); });
 
   async function keepOnScreen() {
@@ -415,15 +480,20 @@
   function say(text, sticky, opts) {
     if (!text) return; clearTimeout(bubbleTimer);
     bubble.textContent = text; bubble.style.display = 'block'; bubbleSticky = !!sticky; bubble.classList.toggle('sticky', bubbleSticky);
+    queueCareLayout(careEl.style.display === 'block');
     if (!sticky) bubbleTimer = setTimeout(hideBubble, Math.min(8000, 1500 + text.length * 120));
     speak(text, opts);
   }
-  function hideBubble() { bubble.style.display = 'none'; bubbleSticky = false; }
+  function hideBubble() { bubble.style.display = 'none'; bubbleSticky = false; queueCareLayout(careEl.style.display === 'block'); }
   bubble.addEventListener('click', () => { if (bubbleSticky) hideBubble(); });
   function positionBubble() {
     const cx = PAD_SIDE + dispW / 2;
-    bubble.style.left = cx + 'px'; bubble.style.top = Math.max(4, PAD_TOP - bubble.offsetHeight - 14) + 'px';
-    chat.style.top = Math.max(4, PAD_TOP - 48) + 'px';
+    bubble.style.left = cx + 'px';
+    const items = overlayItems();
+    if (!items.length) return;
+    if (performance.now() - overhangAt > 150) { const before = requiredPad(); measureOverhang(); if (requiredPad() !== before) queueCareLayout(careEl.style.display === 'block'); }
+    const st = CareLayout.stack(contentOverhang, items).tops;
+    if ('bubble' in st) bubble.style.top = Math.max(CareLayout.EDGE, PAD_TOP + st.bubble) + 'px';
   }
   let voiceIndex = {}, currentAudio = null;
   async function loadVoiceIndex() {
@@ -473,60 +543,19 @@
     if (k && (pet.persona.lines || {})[k]) setTimeout(() => engine.sayFrom(k), 1200);
   }
 
-  // ---------- chat ----------
-  function openChat() { chat.style.display = 'block'; chatInput.value = ''; chatInput.focus(); win.setFocus(); }
-  function closeChat() { chat.style.display = 'none'; }
-  chatInput.addEventListener('keydown', async (e) => {
-    if (e.key === 'Escape') return closeChat();
-    if (e.key !== 'Enter' || !chatInput.value.trim()) return;
-    const msg = chatInput.value.trim(); chatInput.value = ''; closeChat();
-    await sendChat(msg);
-  });
-  // ---------- chat via Capafy relay (see docs/连接方案) ----------
-  const chatQ = []; let chatInflight = null;
-  async function sendChat(message) {
-    if (!settings.instanceId) { say(T.chatErr.notConnected, true); return; }
-    if (chatInflight) { chatQ.push(message); return; }
-    const token = await invoke('secret_get', { key: 'capafy_token' }).catch(() => null);
-    if (!token) { say(T.chatErr.authExpired, true); return; }
-    const requestId = Math.random().toString(36).slice(2, 10);
-    const content = Connect.buildContent(message, { localTime: new Date().toTimeString().slice(0, 5), lastAction: engine.state.action,
-      actions: Object.keys(pet.manifest.actions).filter(a => pet.manifest.actions[a].type === 'frames'), expressions: Object.keys((pet.manifest.layers.expressions) || {}) });
-    chatInflight = { requestId, text: '', seqs: new Map(), timer: null };
-    engine.chatWait(); say('…');
-    chatInflight.timer = setTimeout(() => finishChat(requestId, 'timeout'), 90000);
-    invoke('relay_send', { instanceId: settings.instanceId, token, content, requestId }).catch(() => finishChat(requestId, 'error', 0));
+  // ---------- occasional "you can keep teaching me" hint (rare, idle only, never while sleeping / talking) ----------
+  let teachTimer = null;
+  function setupTeachHints() {
+    clearInterval(teachTimer);
+    teachTimer = setInterval(() => {
+      if (!engine || hidden || engine.state.action !== 'idle' || (care && care.s.sleeping) || bubble.style.display === 'block') return;
+      if (performance.now() / 1000 - (engine.lastInput || 0) < 120) return;        // only when the user has been quiet for a while
+      if (Math.random() > 0.35) return;
+      const own = care.host.line('teachHint');
+      const pool = T.teach.hints || [];
+      say(own || pool[Math.floor(Math.random() * pool.length)]);
+    }, 25 * 60000);
   }
-  function renderPartial() {
-    const c = chatInflight; if (!c) return;
-    const ordered = [...c.seqs.entries()].sort((a, b) => a[0] - b[0]).map(e => e[1]).join('');
-    const partial = Connect.parseTags(ordered || c.text, [], []).text;
-    if (partial) { bubble.textContent = partial; bubble.style.display = 'block'; }
-  }
-  function finishChat(requestId, kind, status, errBody) {
-    const c = chatInflight; if (!c || c.requestId !== requestId) return;
-    clearTimeout(c.timer); chatInflight = null;
-    if (kind === 'error') { say(T.chatErr[Connect.errorKey(status, errBody)] || T.chatErr.offline, true); engine.stopChat(); }
-    else if (kind === 'timeout') { say(T.chatErr.timeout); engine.stopChat(); }
-    else {
-      const ordered = [...c.seqs.entries()].sort((a, b) => a[0] - b[0]).map(e => e[1]).join('') || c.text;
-      const known = Object.keys(pet.manifest.actions), exprs = Object.keys(pet.manifest.layers.expressions || {});
-      const r = Connect.parseTags(ordered, known, exprs);
-      chatHistory.push({ role: 'user', content: '' }, { role: 'assistant', content: r.text });
-      engine.chatReply(); say(r.text || '……');
-      if (r.expr) engine.showExpression(r.expr, Math.min(8000, 1500 + r.text.length * 120));
-      if (r.action) engine.play(r.action, PET_PRIORITY.chat);
-      setTimeout(() => engine.stopChat(), Math.min(8000, 1500 + r.text.length * 120));
-    }
-    if (chatQ.length) setTimeout(() => sendChat(chatQ.shift()), 800);
-  }
-  listen('petchat', (e) => {
-    const p = e.payload; if (!chatInflight || p.request_id !== chatInflight.requestId) return;
-    if (p.kind === 'message') { if (p.seq >= 0) chatInflight.seqs.set(p.seq, p.content); else chatInflight.text += p.content; renderPartial(); }
-    else if (p.kind === 'done') finishChat(p.request_id, 'done');
-    else if (p.kind === 'timeout') finishChat(p.request_id, 'timeout');
-    else if (p.kind === 'error') finishChat(p.request_id, 'error', p.status, p.content);
-  });
 
   // ---------- reminders ----------
   function setupReminders() {
@@ -556,8 +585,7 @@
     const scaleItems = await Promise.all([0.5, 0.75, 1, 1.5, 2].map(s => CheckMenuItem.new({ text: Math.round(s * 100) + '%', checked: Math.abs(settings.scale - s) < 0.01, action: async () => { settings.scale = s; await saveSettings(); await applyScale(); } })));
     const items = [
       await MenuItem.new({ text: T.menu.care(pet.name), action: openCare }),
-      await MenuItem.new({ text: T.menu.talk(pet.name), action: openChat }),
-      ...(actionItems.length ? [await Submenu.new({ text: T.menu.actions, items: actionItems })] : []),
+      await Submenu.new({ text: T.menu.actions, items: actionItems.length ? actionItems : [await MenuItem.new({ text: T.teach.empty, action: teachExport })] }),
       await Submenu.new({ text: T.menu.size, items: scaleItems }),
       await CheckMenuItem.new({ text: T.menu.mute, checked: settings.muted, action: async () => { settings.muted = !settings.muted; await saveSettings(); } }),
       await CheckMenuItem.new({ text: T.menu.onTop, checked: settings.alwaysOnTop, action: async () => { settings.alwaysOnTop = !settings.alwaysOnTop; await win.setAlwaysOnTop(settings.alwaysOnTop); await saveSettings(); } }),
@@ -615,8 +643,10 @@
         if (pkgState) { const tmp = new CareSystem(merged, care.host); tmp.mergeLedger(pkgState); Object.assign(merged, tmp.s); if (pkgState.outfit !== undefined) merged.outfit = pkgState.outfit; }
         await invoke('write_text', { path: join(info.dir, 'state.json'), content: JSON.stringify(merged) });
       }
+      const updated = pet && info.id === pet.id && Number(info.version) > Number(pet.manifest.version);
       toast(T.imported(info.name, info.version));
       pets = await invoke('list_pets'); await loadPet(info);
+      if (updated) setTimeout(() => say(care.host.line('learnedNew') || T.teach.learned, true), 1800);
     } catch (e) { toast(T.importFail + e, 5000); }
   }
   async function switchPet() {
@@ -643,7 +673,7 @@
     const out = await window.__TAURI__.dialog.save({ defaultPath: `${pet.id}-v${pet.manifest.version}.petpack` }); if (!out) return;
     try { await invoke('export_pet', { dir: pet.dir, outPath: out }); toast(T.exported); } catch (e) { toast(T.exportFail + e, 5000); }
   }
-  async function toggleHidden() { hidden = !hidden; if (hidden) await win.hide(); else { await win.show(); } }
+  async function toggleHidden() { hidden = !hidden; if (hidden) { if (fxQueue) fxQueue.clear(); if (fxAbort) fxAbort.abort(); await win.hide(); } else { await win.show(); } }
   async function openSettings() {
     const { WebviewWindow } = window.__TAURI__.webviewWindow;
     const existing = await WebviewWindow.getByLabel('settings'); if (existing) { await existing.setFocus(); return; }

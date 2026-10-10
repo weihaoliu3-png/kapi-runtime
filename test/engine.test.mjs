@@ -28,9 +28,15 @@ e.hover = true; // suppress idle-random while testing deterministic paths
 
 // look-follow: cursor to the screen-right -> d090
 e.setLookVector(300, 0); assert.equal(e.look.current, 'd090');
-clock += 0.3; e.setLookVector(0, -300); assert.equal(e.look.current, 'd000', 'up = d000');
+// a cursor that jumped two sectors is followed one neighbour per hold, never skipping a direction frame
+clock += 0.3; e.setLookVector(0, -300); assert.equal(e.look.current, 'd045', 'right -> up goes through d045 first');
+clock += 0.3; e.setLookVector(0, -300); assert.equal(e.look.current, 'd000', 'then d000');
+clock += 0.3; e.setLookVector(0, -300); assert.equal(e.look.current, 'd000', 'arrived: stays');
+// up -> down-left: the short way round is d315, d270, d225 (3 holds), not through d090
+clock += 0.3; e.setLookVector(-300, 300); assert.equal(e.look.current, 'd315');
+clock += 0.3; e.setLookVector(-300, 300); assert.equal(e.look.current, 'd270');
 clock += 0.3; e.setLookVector(-300, 300); assert.equal(e.look.current, 'd225', 'down-left = d225');
-clock += 0.3; e.setLookVector(10, 10); assert.equal(e.look.current, 'base', 'deadzone -> base');
+clock += 0.3; e.setLookVector(10, 10); assert.equal(e.look.current, 'base', 'deadzone -> base (direct)');
 // hold: rapid change within holdMs is ignored
 clock += 0.3; e.setLookVector(300, 0); clock += 0.05; e.setLookVector(-300, 0); assert.equal(e.look.current, 'd090');
 
