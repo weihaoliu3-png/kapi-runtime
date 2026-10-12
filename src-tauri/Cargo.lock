@@ -2360,7 +2360,7 @@ dependencies = [
 
 [[package]]
 name = "kapi"
-version = "0.8.10"
+version = "0.8.11"
 dependencies = [
  "active-win-pos-rs",
  "base64 0.22.1",

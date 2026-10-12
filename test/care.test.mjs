@@ -19,3 +19,8 @@ console.log('care tests passed');
   const pkg = { ticketLog: c2.s.ticketLog.map(t => ({ ...t, usedAt: 1, note: 'sweater' })) };
   const before = c2.s.tickets.outfit; assert.equal(c2.mergeLedger(pkg), c2.s.ticketLog.length); assert.equal(c2.s.tickets.outfit, before - c2.s.ticketLog.length);
   assert.equal(c2.mergeLedger(pkg), 0, 'idempotent'); console.log('ticket ledger ok'); }
+
+// 0.8.11: a pet that came home before learning to sleep tells the host when the stand-in sleep plays (host.pending)
+{ const pend = []; const h2 = { ...host, pending: (id) => pend.push(id) }; const c3 = new CareSystem({ energy: 10 }, h2);
+  c3.do('sleep'); assert.deepEqual(pend, ['sleep'], 'sleep() notifies host.pending'); }
+console.log('care pending hook ok');

@@ -145,6 +145,39 @@
     setupReminders();
     setupTeachHints();
     if (!settings.hintShown) { setTimeout(() => say(T.hint, true), 2500); settings.hintShown = true; await saveSettings(); }
+    await pendingFirstHint();
+  }
+
+  // ---------- skills still waiting to be hatched (0.8.11) ----------
+  // A pet may come home before it has learned to eat / drink / sleep (the user chose to take it home first). The runtime
+  // covers those with procedural stand-ins, and the pet itself says, once per version and when the stand-in plays, that
+  // it still has things to learn back in the assistant. Derived from the package: a care action that is not real frames.
+  const PENDING_IDS = ['eat', 'drink', 'sleep'];
+  function pendingSkills() {
+    if (!pet) return [];
+    const extra = Array.isArray(pet.manifest.pendingSkills) ? pet.manifest.pendingSkills.filter(x => typeof x === 'string') : [];
+    return [...PENDING_IDS.filter(id => !(pet.manifest.actions[id] && pet.manifest.actions[id].type === 'frames')), ...extra];
+  }
+  function pendingLabel(id) { return (T.pending.labels || {})[id] || id; }
+  function pendingLine(id) {
+    const own = care && care.host.line(id ? 'pending' + id[0].toUpperCase() + id.slice(1) : 'pendingHint');
+    if (own) return own;
+    const list = pendingSkills().map(pendingLabel);
+    return id ? T.pending.one(pendingLabel(id)) : T.pending.all(list);
+  }
+  async function pendingFirstHint() {
+    const list = pendingSkills(); if (!list.length) return;
+    const key = pet.id + '@' + pet.manifest.version;
+    if ((settings.pendingHinted || []).includes(key)) return;
+    settings.pendingHinted = [...(settings.pendingHinted || []), key].slice(-40); await saveSettings();
+    setTimeout(() => { if (pet && pet.id + '@' + pet.manifest.version === key) say(pendingLine(null), true); }, settings.hintShown ? 9000 : 4500);
+  }
+  const pendingSaidAt = {};
+  function pendingAfterCare(id) {
+    if (!pendingSkills().includes(id)) return;
+    const now = Date.now(); if (now - (pendingSaidAt[id] || 0) < 10 * 60000) return;
+    pendingSaidAt[id] = now;
+    setTimeout(() => say(pendingLine(id)), id === 'sleep' ? 2500 : 3500);
   }
 
   // ---------- interactions: milestones (click / stroke / flower -> pet-window effects) + typing garden ----------
@@ -221,7 +254,8 @@
     let st = null; try { st = JSON.parse(await invoke('read_text', { path: stateFile })); } catch (_) {}
     care = new CareSystem(st, {
       say: (t, sticky) => say(t, sticky), expr: (n, ms) => engine.showExpression(n, ms),
-      play: (id) => { if (!pet.manifest.actions[id] && (id === 'eat' || id === 'drink')) pet.manifest.actions[id] = { type: 'procedural', preset: id }; if (pet.manifest.actions[id]) engine.play(id); else engine.play('nod'); },
+      play: (id) => { if (!pet.manifest.actions[id] && (id === 'eat' || id === 'drink')) pet.manifest.actions[id] = { type: 'procedural', preset: id }; if (pet.manifest.actions[id]) engine.play(id); else engine.play('nod'); pendingAfterCare(id); },
+      pending: (id) => pendingAfterCare(id),
       setSleeping: (on) => engine.setSleeping(on), setStageScale: async (k) => { stageScale = k; await applyScale(); }, toast: (m) => toast(m, 4000),
       save: (state) => invoke('write_text', { path: stateFile, content: JSON.stringify(state) }).catch(() => {}), t,
       line: (key) => { const L = (pet.persona.lines || {})[key]; return L && L.length ? L[Math.floor(Math.random() * L.length)] : null; },
@@ -555,6 +589,7 @@
       if (!engine || hidden || engine.state.action !== 'idle' || (care && care.s.sleeping) || bubble.style.display === 'block') return;
       if (performance.now() / 1000 - (engine.lastInput || 0) < 120) return;        // only when the user has been quiet for a while
       if (Math.random() > 0.35) return;
+      if (pendingSkills().length) { say(pendingLine(null)); return; }
       const own = care.host.line('teachHint');
       const pool = T.teach.hints || [];
       say(own || pool[Math.floor(Math.random() * pool.length)]);
