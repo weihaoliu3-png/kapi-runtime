@@ -88,6 +88,26 @@ fn write_text(path: String, content: String) -> Result<(), String> {
     fs::write(&path, content).map_err(|e| e.to_string())
 }
 
+/// bundle.json next to the executable (or beside the .app): written by the skill's first-delivery packaging so the
+/// runtime can activate the delivered pet once. None when there is no bundle file.
+#[tauri::command]
+fn bundle_info() -> Option<serde_json::Value> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let mut cands = vec![dir.join("bundle.json")];
+    if let Some(app_dir) = dir.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) {
+        cands.push(app_dir.join("bundle.json"));
+    }
+    for c in cands {
+        if let Ok(txt) = fs::read_to_string(&c) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) {
+                return Some(v);
+            }
+        }
+    }
+    None
+}
+
 #[tauri::command]
 fn settings_path(app: AppHandle) -> Result<String, String> {
     let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
@@ -263,7 +283,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            list_pets, read_text, read_file_b64, write_text, settings_path, import_pet, export_pet,
+            list_pets, read_text, read_file_b64, write_text, settings_path, bundle_info, import_pet, export_pet,
             active_window, battery_status, open_pet_window
         ])
         .setup(|app| {
@@ -272,10 +292,12 @@ pub fn run() {
             let switch = MenuItem::with_id(app, "switch", "切换宠物", true, None::<&str>)?;
             let export = MenuItem::with_id(app, "export", "导出当前宠物包…", true, None::<&str>)?;
             let settings = MenuItem::with_id(app, "settings", "设置…", true, None::<&str>)?;
+            let recover = MenuItem::with_id(app, "recover", "恢复交互（点不动时）", true, None::<&str>)?;
+            let close_others = MenuItem::with_id(app, "close-others", "收回其他宠物", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
-                &[&show, &import, &switch, &export, &PredefinedMenuItem::separator(app)?, &settings, &quit],
+                &[&show, &import, &switch, &export, &PredefinedMenuItem::separator(app)?, &recover, &close_others, &PredefinedMenuItem::separator(app)?, &settings, &quit],
             )?;
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
@@ -286,6 +308,18 @@ pub fn run() {
                     let id = event.id().as_ref().to_string();
                     if id == "quit" {
                         app.exit(0);
+                    } else if id == "close-others" {
+                        // every extra pet window (label pet-<id>) goes; the main "pet" window stays
+                        for (label, w) in app.webview_windows() {
+                            if label.starts_with("pet-") { let _ = w.close(); }
+                        }
+                        let _ = app.emit("tray", "recover");
+                    } else if id == "recover" {
+                        // belt and braces from the native side too: no pet window may stay click-through
+                        for (label, w) in app.webview_windows() {
+                            if label == "pet" || label.starts_with("pet-") { let _ = w.set_ignore_cursor_events(false); }
+                        }
+                        let _ = app.emit("tray", id);
                     } else {
                         let _ = app.emit("tray", id);
                     }

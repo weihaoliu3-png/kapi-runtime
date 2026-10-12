@@ -37,6 +37,19 @@ clock += 0.3; e.setLookVector(-300, 300); assert.equal(e.look.current, 'd315');
 clock += 0.3; e.setLookVector(-300, 300); assert.equal(e.look.current, 'd270');
 clock += 0.3; e.setLookVector(-300, 300); assert.equal(e.look.current, 'd225', 'down-left = d225');
 clock += 0.3; e.setLookVector(10, 10); assert.equal(e.look.current, 'base', 'deadzone -> base (direct)');
+// 0.8.10: while a look frame is on screen, neither a blink nor an expression cuts to the idle front (that was the
+// "jumps back to the default picture" of the v5 retro); both show as soon as the cursor is back in the deadzone
+clock += 0.3; e.setLookVector(300, 0); assert.equal(e.look.current, 'd090');
+e.blink.until = clock + 1; e.showExpression('happy', 5000);
+assert.equal(e._currentImage().name, 'd090', 'look frame wins over blink + expression while following');
+clock += 0.3; e.setLookVector(0, 0); assert.equal(e.look.current, 'base');
+assert.equal(e._currentImage().name, 'blink', 'back on base: the pending blink shows now (no expression image in this fixture)');
+e.blink.until = 0; assert.equal(e._currentImage().name, 'base');
+e.blink = { until: 0, next: clock }; e.update(); // blink schedules only on base
+assert.ok(e.blink.until > clock, 'blink fires on base');
+clock += 0.5; e.setLookVector(300, 0); e.blink = { until: 0, next: clock }; e.update();
+assert.equal(e.blink.until, 0, 'blink is skipped (rescheduled) while looking');
+e.blink = { until: 0, next: clock + 3 + 4 }; e.setLookVector(0, 0); clock += 0.3; e.setLookVector(0, 0);
 // hold: rapid change within holdMs is ignored
 clock += 0.3; e.setLookVector(300, 0); clock += 0.05; e.setLookVector(-300, 0); assert.equal(e.look.current, 'd090');
 
