@@ -226,12 +226,14 @@ fn battery_status() -> Option<BatteryInfo> {
 
 /// Open another pet in its own window (label pet-<id>). The page reads ?pet=<id>.
 #[tauri::command]
-fn open_pet_window(app: AppHandle, id: String) -> Result<(), String> {
+fn open_pet_window(app: AppHandle, id: String, x: Option<f64>, y: Option<f64>) -> Result<(), String> {
     let label = format!("pet-{}", id.replace(|c: char| !c.is_ascii_alphanumeric(), "-"));
-    if app.get_webview_window(&label).is_some() {
-        return Ok(());
+    if let Some(w) = app.get_webview_window(&label) {
+        let _ = w.show(); return Ok(());
     }
-    let url = tauri::WebviewUrl::App(format!("index.html?pet={id}").into());
+    // the caller passes where it wants the new pet (next to itself, never on top of itself); the page reads ?x=&y=
+    let pos = match (x, y) { (Some(x), Some(y)) => format!("&x={}&y={}", x.round(), y.round()), _ => String::new() };
+    let url = tauri::WebviewUrl::App(format!("index.html?pet={id}{pos}").into());
     tauri::WebviewWindowBuilder::new(&app, &label, url)
         .title("Kapi").inner_size(360.0, 480.0).transparent(true).decorations(false).shadow(false)
         .always_on_top(true).skip_taskbar(true).resizable(false).accept_first_mouse(true).visible_on_all_workspaces(true)
@@ -280,6 +282,14 @@ fn spawn_input_watcher(app: AppHandle) {
 
 pub fn run() {
     tauri::Builder::default()
+        // one Kapi at a time (0.8.12): a second launch (double-clicking the exe again, or the old process never having
+        // quit) used to stack a second pet window — and a second tray icon — on top of the first; clicks then went to
+        // whichever window was on top while the other kept animating. Now the second launch just shows the first.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            for (label, w) in app.webview_windows() {
+                if label == "pet" { let _ = w.show(); let _ = w.set_ignore_cursor_events(false); let _ = w.set_focus(); }
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
@@ -291,13 +301,13 @@ pub fn run() {
             let import = MenuItem::with_id(app, "import", "导入宠物包 (.petpack)…", true, None::<&str>)?;
             let switch = MenuItem::with_id(app, "switch", "切换宠物", true, None::<&str>)?;
             let export = MenuItem::with_id(app, "export", "导出当前宠物包…", true, None::<&str>)?;
-            let settings = MenuItem::with_id(app, "settings", "设置…", true, None::<&str>)?;
             let recover = MenuItem::with_id(app, "recover", "恢复交互（点不动时）", true, None::<&str>)?;
             let close_others = MenuItem::with_id(app, "close-others", "收回其他宠物", true, None::<&str>)?;
+            let diagnose = MenuItem::with_id(app, "diagnose", "诊断（出问题时点这个，再把日志发来）", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
-                &[&show, &import, &switch, &export, &PredefinedMenuItem::separator(app)?, &recover, &close_others, &PredefinedMenuItem::separator(app)?, &settings, &quit],
+                &[&show, &import, &switch, &export, &PredefinedMenuItem::separator(app)?, &recover, &close_others, &diagnose, &PredefinedMenuItem::separator(app)?, &quit],
             )?;
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())

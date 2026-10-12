@@ -51,13 +51,14 @@
   }
   const stroke = { xs: [], lastT: 0 };
 
-  const BASE_PAD_TOP = 130, PAD_SIDE = 60;
+  const BASE_PAD_TOP = 130, PAD_SIDE = 90;      // 90: room for the +-16 deg swing while dragged (0.8.13)
   let PAD_TOP = BASE_PAD_TOP;
   let careWanted = false, careLayoutTask = Promise.resolve();
   let settings = { scale: 1, activePetId: '', muted: false, alwaysOnTop: true };
   let settingsFile = '';
   let pets = [], pet = null, engine = null, scale = 1, dispW = 0, dispH = 0, hidden = false;
   let lastCursor = null, lastCursorMove = 0, dragging = false, dragStartCursor = null, dragStartWin = null, dragMoved = false, mouseDownAt = 0;
+  let grabPoint = null, prevDragV = null;
   let prevCursorForV = null, prevT = 0, lastHitVisible = true, lastIgnoreAt = 0, bubbleTimer = null, bubbleSticky = false, dragV = { x: 0, y: 0, t: 0 };
   let reminderState = {};
 
@@ -218,6 +219,19 @@
   }
   /** Play ONE effect in a separate canvas inside the pet window; no fullscreen window is created. Called by the
    *  queue only, so two effects never overlap; a pet switch / resize aborts the running one through fxAbort. */
+  // dizzy stars (0.8.13): three little stars orbiting above the head while shaken hard and during the stagger after
+  function drawDizzyOverlay() {
+    if (!engine || !((engine.drag && engine.drag.dizzy) || engine.dizzyUntil > engine.now())) return;
+    const hp = headPoint(); const t = performance.now() / 1000; const r = dispW * 0.22;
+    ctx.save(); ctx.fillStyle = '#ffd54a'; ctx.strokeStyle = 'rgba(120,80,0,0.6)'; ctx.lineWidth = 1;
+    for (let i = 0; i < 3; i++) {
+      const a = t * 4.2 + i * Math.PI * 2 / 3; const x = hp.x + Math.cos(a) * r, y = hp.y - 6 + Math.sin(a) * r * 0.35; const s = 6 + 2 * Math.sin(a * 2);
+      ctx.beginPath();
+      for (let k = 0; k < 10; k++) { const rr = k % 2 ? s * 0.45 : s; const an = -Math.PI / 2 + k * Math.PI / 5; ctx.lineTo(x + Math.cos(an) * rr, y + Math.sin(an) * rr); }
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+    ctx.restore();
+  }
   async function playEffect(effect, m) {
     if (fxAbort) fxAbort.abort();
     const run = ++fxRun;
@@ -256,6 +270,7 @@
       say: (t, sticky) => say(t, sticky), expr: (n, ms) => engine.showExpression(n, ms),
       play: (id) => { if (!pet.manifest.actions[id] && (id === 'eat' || id === 'drink')) pet.manifest.actions[id] = { type: 'procedural', preset: id }; if (pet.manifest.actions[id]) engine.play(id); else engine.play('nod'); pendingAfterCare(id); },
       pending: (id) => pendingAfterCare(id),
+      react: (kind, key, chance, fb) => react(kind, key, chance, fb),
       setSleeping: (on) => engine.setSleeping(on), setStageScale: async (k) => { stageScale = k; await applyScale(); }, toast: (m) => toast(m, 4000),
       save: (state) => invoke('write_text', { path: stateFile, content: JSON.stringify(state) }).catch(() => {}), t,
       line: (key) => { const L = (pet.persona.lines || {})[key]; return L && L.length ? L[Math.floor(Math.random() * L.length)] : null; },
@@ -364,6 +379,7 @@
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       engine.draw(ctx, scale, PAD_SIDE, PAD_TOP);
       drawGardenOverlay();
+      drawDizzyOverlay();
       drawWhip();
       positionBubble();
     }
@@ -381,21 +397,65 @@
   }
 
   // ---------- 30Hz poll: cursor -> hit test (pass-through) + look-follow + drag ----------
+  // 0.8.12: the whip is drawn as a real lash — a tapered leather cord trailing the cursor with inertia (the last
+  // ~350 ms of cursor positions), a stubby handle at the cursor, a sag when the hand is still, and a white snap at
+  // the hit point. The old version only drew the strike streaks, which read as "brown scribbles".
+  let whipTrail = [], whipFlash = null;
   function drawWhip() {
     const now = performance.now();
     whipMarks = whipMarks.filter(m => now - m.at < 220);
+    whipTrail = whipTrail.filter(q => now - q.t < 350);
     whipCtx.clearRect(0, 0, whipCanvas.width, whipCanvas.height);
-    for (const m of whipMarks) {
-      const fade = 1 - (now - m.at) / 220;
-      const mx = (m.x0 + m.x1) / 2, my = (m.y0 + m.y1) / 2 - 15;
-      whipCtx.lineCap = 'round'; whipCtx.strokeStyle = `rgba(60,33,24,${fade})`; whipCtx.lineWidth = 5 * fade + 1;
-      whipCtx.beginPath(); whipCtx.moveTo(m.x0, m.y0); whipCtx.quadraticCurveTo(mx, my, m.x1, m.y1); whipCtx.stroke();
-      whipCtx.strokeStyle = `rgba(244,205,145,${fade * 0.8})`; whipCtx.lineWidth = 1.5;
-      whipCtx.stroke();
+    if (ctrlHeld && whipTrail.length) {
+      const pts = whipTrail.slice().reverse();                      // newest first = handle end
+      const head = pts[0];
+      // still hand: let the lash hang (gravity) instead of vanishing
+      let path = pts;
+      const moved = pts.length > 1 ? Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) : 0;
+      if (moved < 12) {
+        const sway = Math.sin(now / 260) * 6;
+        path = [head, { x: head.x + 10 + sway, y: head.y + 22 }, { x: head.x + 14 + sway * 1.5, y: head.y + 48 }, { x: head.x + 10 + sway * 2, y: head.y + 72 }];
+      } else {
+        // stretch a short trail into a proper lash length (~90 px) along its own direction
+        const tail = pts[pts.length - 1]; const len = Math.hypot(head.x - tail.x, head.y - tail.y);
+        if (len < 90) { const ux = (tail.x - head.x) / (len || 1), uy = (tail.y - head.y) / (len || 1); path = pts.concat([{ x: tail.x + ux * (90 - len), y: tail.y + uy * (90 - len) + 8 }]); }
+      }
+      // smooth polyline through midpoints, drawn in segments with a tapering width (thick at the handle, hair-thin tip)
+      const segs = [];
+      for (let i = 0; i < path.length - 1; i++) {
+        const p0 = path[i], p1 = path[i + 1];
+        const m0 = i === 0 ? p0 : { x: (path[i - 1].x + p0.x) / 2, y: (path[i - 1].y + p0.y) / 2 };
+        const m1 = i === path.length - 2 ? p1 : { x: (p0.x + p1.x) / 2, y: (p0.y + p1.y) / 2 };
+        segs.push({ m0, c: p0, m1 });
+      }
+      const n = segs.length;
+      whipCtx.lineCap = 'round'; whipCtx.lineJoin = 'round';
+      segs.forEach((sg, i) => {
+        const k = i / Math.max(1, n - 1);
+        const w = 5.5 * (1 - k) + 0.8;
+        whipCtx.strokeStyle = 'rgba(52,30,22,0.95)'; whipCtx.lineWidth = w;
+        whipCtx.beginPath(); whipCtx.moveTo(sg.m0.x, sg.m0.y); whipCtx.quadraticCurveTo(sg.c.x, sg.c.y, sg.m1.x, sg.m1.y); whipCtx.stroke();
+        if (w > 1.6) { whipCtx.strokeStyle = 'rgba(190,130,80,0.55)'; whipCtx.lineWidth = Math.max(0.6, w * 0.35); whipCtx.stroke(); }
+      });
+      // handle: a short thick grip at the cursor, pointing away from the lash
+      const dirx = head.x - path[1].x, diry = head.y - path[1].y; const dl = Math.hypot(dirx, diry) || 1;
+      whipCtx.strokeStyle = '#3a2418'; whipCtx.lineWidth = 8; whipCtx.beginPath(); whipCtx.moveTo(head.x, head.y); whipCtx.lineTo(head.x + dirx / dl * 14, head.y + diry / dl * 14); whipCtx.stroke();
+      whipCtx.strokeStyle = '#b77b49'; whipCtx.lineWidth = 3; whipCtx.stroke();
     }
+    for (const m of whipMarks) {                                    // welts where it landed
+      const fade = 1 - (now - m.at) / 220;
+      whipCtx.lineCap = 'round'; whipCtx.strokeStyle = `rgba(220,80,70,${fade * 0.7})`; whipCtx.lineWidth = 3 * fade + 1;
+      whipCtx.beginPath(); whipCtx.moveTo(m.x0, m.y0); whipCtx.lineTo(m.x1, m.y1); whipCtx.stroke();
+    }
+    if (whipFlash && now - whipFlash.at < 160) {                   // the snap
+      const f = 1 - (now - whipFlash.at) / 160; const r = 6 + 16 * (1 - f);
+      whipCtx.strokeStyle = `rgba(255,255,255,${f})`; whipCtx.lineWidth = 2;
+      for (let i = 0; i < 6; i++) { const a = i * Math.PI / 3 + 0.3; whipCtx.beginPath(); whipCtx.moveTo(whipFlash.x + Math.cos(a) * r * 0.4, whipFlash.y + Math.sin(a) * r * 0.4); whipCtx.lineTo(whipFlash.x + Math.cos(a) * r, whipFlash.y + Math.sin(a) * r); whipCtx.stroke(); }
+    } else if (whipFlash) whipFlash = null;
   }
   function updateWhip(x, y, overPet) {
-    if (!ctrlHeld || dragging) { whipPrev = null; whipOver = false; whipArmed = true; whipDistance = 0; return; }
+    if (!ctrlHeld || dragging) { whipPrev = null; whipOver = false; whipArmed = true; whipDistance = 0; whipTrail = []; return; }
+    whipTrail.push({ x, y, t: performance.now() }); if (whipTrail.length > 14) whipTrail.shift();
     const prev = whipPrev; whipPrev = { x, y };
     if (!overPet) { whipOver = false; whipArmed = true; whipDistance = 0; return; }
     if (!prev) { whipOver = true; return; }
@@ -413,41 +473,80 @@
       // sound: the whip crack (procedural) and the pet's own "ouch" (recorded whipReact clip when the pack has one,
       // else a short babble in the pet's timbre) — both on every valid hit, both silent when muted
       if (!settings.muted) KapiVoice.whipCrack(0.6);
-      say(care.host.line('whipReact') || (T.inter && T.inter.whipReact) || '!', false, { force: true, hit: true });
+      react('hit', 'whipReact', REACT_CHANCE.hit, (T.inter && T.inter.whipReact) || '!');
+      whipFlash = { x, y, at: performance.now() };
     }
     whipOver = true;
   }
+  // Poll diagnostics (0.8.12): the v4/v5 "after summoning a second pet the first one stops following the mouse and
+  // taking clicks, while typing effects still fire" means THIS loop stopped completing — everything else lives in
+  // other timers. Every stage is isolated and counted, so one failing IPC call (pass-through, cursor, position) can
+  // no longer silently kill look-follow for the rest of the session; a watchdog forces the window clickable when the
+  // loop has not completed for 3 s; the tray「诊断」item shows and saves what failed.
+  const pollDiag = { ok: 0, lastOkAt: 0, fails: {}, lastErr: '', toasted: false };
+  let pawShownUntil = 0; const nowSec = () => performance.now() / 1000;
+  function pollFail(stage, e) {
+    pollDiag.fails[stage] = (pollDiag.fails[stage] || 0) + 1; pollDiag.lastErr = stage + ': ' + (e && e.message ? e.message : String(e));
+    if (!pollDiag.toasted && pollDiag.fails[stage] >= 30) { pollDiag.toasted = true; toast('鼠标跟随出错（' + stage + '）：' + pollDiag.lastErr.slice(0, 120), 6000); saveDebugLog(); }
+  }
+  async function saveDebugLog() {
+    try {
+      let local = null, alpha = null;
+      try { if (cursorLogical && winRect) { local = { x: cursorLogical.x - winRect.x, y: cursorLogical.y - winRect.y }; alpha = petAlphaAt(local.x, local.y); } } catch (_) {}
+      const line = JSON.stringify({ at: new Date().toISOString(), label: win.label, pet: pet && pet.id, engine: !!engine, hidden, dragging, cursor: cursorLogical, local, alpha, win: winRect,
+                                    ignoreCursorEvents: lastHitVisible === null ? null : !lastHitVisible, diag: pollDiag, otherPets: Object.keys(otherPets) });
+      const path = settingsFile.replace(/settings\.json$/, 'kapi-debug.log');
+      let prev = ''; try { prev = await invoke('read_text', { path }); } catch (_) {}
+      const lines = (prev ? prev.split('\n') : []).filter(Boolean).slice(-80); lines.push(line);
+      await invoke('write_text', { path, content: lines.join('\n') + '\n' });
+      return path;
+    } catch (_) { return ''; }
+  }
   async function poll() {
     if (!engine || hidden) return;
-    try {
-      const sf = await win.scaleFactor();
-      const cp = (await cursorPosition()).toLogical(sf);
-      const wp = (await win.outerPosition()).toLogical(sf);
-      const lx = cp.x - wp.x, ly = cp.y - wp.y;
-      const t = performance.now() / 1000;
-      cursorLogical = cp; if (winRect) { winRect.x = wp.x; winRect.y = wp.y; }
-      if (!lastCursor || lastCursor.x !== cp.x || lastCursor.y !== cp.y) { lastCursorMove = t; engine.userInput && (engine.lastInput = t); }
-      lastCursor = cp;
+    let sf, cp, wp;
+    try { sf = await win.scaleFactor(); cp = (await cursorPosition()).toLogical(sf); wp = (await win.outerPosition()).toLogical(sf); }
+    catch (e) { pollFail('cursor', e); return; }
+    const lx = cp.x - wp.x, ly = cp.y - wp.y;
+    const t = performance.now() / 1000;
+    cursorLogical = cp; if (winRect) { winRect.x = wp.x; winRect.y = wp.y; }
+    if (!lastCursor || lastCursor.x !== cp.x || lastCursor.y !== cp.y) { lastCursorMove = t; engine.userInput && (engine.lastInput = t); }
+    lastCursor = cp;
 
-      if (dragging) {
+    if (dragging) {
+      try {
         const nx = dragStartWin.x + (cp.x - dragStartCursor.x), ny = dragStartWin.y + (cp.y - dragStartCursor.y);
         if (Math.hypot(cp.x - dragStartCursor.x, cp.y - dragStartCursor.y) > 4) dragMoved = true;
         if (dragMoved) {
-          if (!engine.drag.active) engine.dragStart();
+          if (!engine.drag.active) { engine.dragStart(grabPoint); prevDragV = null; }
           await win.setPosition(new LogicalPosition(nx, ny));
-          if (prevCursorForV) { const dtv = Math.max(0.016, t - prevT); dragV = { x: (cp.x - prevCursorForV.x) / dtv, y: (cp.y - prevCursorForV.y) / dtv, t }; engine.dragMove(dragV.x); }
+          if (prevCursorForV) {
+            const dtv = Math.max(0.016, t - prevT); dragV = { x: (cp.x - prevCursorForV.x) / dtv, y: (cp.y - prevCursorForV.y) / dtv, t };
+            const ax = prevDragV ? (dragV.x - prevDragV.x) / dtv : 0, ay = prevDragV ? (dragV.y - prevDragV.y) / dtv : 0; prevDragV = dragV;
+            engine.dragMove(dragV.x, dragV.y, ax / Math.max(1e-6, scale), ay / Math.max(1e-6, scale));   // canvas px / s^2
+          }
         }
         prevCursorForV = cp; prevT = t;
-        return;
-      }
-      // hit test against drawn pixels (pet body + bubble)
+      } catch (e) { pollFail('drag', e); }
+      return;
+    }
+    // look-follow FIRST: vector from head point (top 25% of pet) to cursor — never behind an IPC call that may fail
+    const headX = PAD_SIDE + dispW / 2, headY = PAD_TOP + dispH * 0.25;
+    try { engine.setLookVector(lx - headX, ly - headY); } catch (e) { pollFail('look', e); }
+    // hit test against drawn pixels (pet body + bubble)
+    let visible = true;
+    try {
       const inWin = lx >= 0 && ly >= 0 && lx < canvas.clientWidth && ly < canvas.clientHeight;
       const overUi = inWin && isOver(bubble, lx, ly);
       const overPet = inWin && petAlphaAt(lx, ly) > 25;
-      canvas.style.cursor = ctrlHeld && overPet ? 'url("whip-cursor.svg") 44 20, crosshair' : '';
+      canvas.style.cursor = ctrlHeld ? 'crosshair' : '';          // the lash itself is drawn on the whip canvas (0.8.12)
       updateWhip(lx, ly, overPet);
       engine.hover = overPet;
-      pawEl.style.display = (overPet || overUi || careEl.style.display === 'block') ? 'flex' : 'none';
+      // the 🐾 button stays for a moment after the cursor leaves the pet (the way to it crosses transparent pixels),
+      // and stays while the cursor is on it — otherwise it vanished mid-way and could never be reached (0.8.12)
+      const overPaw = isOver(pawEl, lx, ly);
+      if (overPet || overUi || overPaw || careEl.style.display === 'block') pawShownUntil = nowSec() + 0.8;
+      pawEl.style.display = nowSec() < pawShownUntil ? 'flex' : 'none';
       // Petting works anywhere on visible pet pixels, not only on the head.
       if (overPet && !ctrlHeld) {                       // stroke = 3+ horizontal direction reversals within 1.5s
         if (t - stroke.lastT > 1.5) stroke.xs = []; stroke.lastT = t; stroke.xs.push(lx);
@@ -455,17 +554,27 @@
         let rev = 0; for (let i = 2; i < stroke.xs.length; i++) { const a = stroke.xs[i - 1] - stroke.xs[i - 2], b = stroke.xs[i] - stroke.xs[i - 1]; if (a * b < 0 && Math.abs(a) > 2 && Math.abs(b) > 2) rev++; }
         if (rev >= 3) { stroke.xs = []; if (engine.stroke()) care.do('pet', { silent: true }); }
       } else stroke.xs = [];
-      const visible = overPet || overUi || (careEl.style.display === 'block' && isOver(careEl, lx, ly)) || isOver(pawEl, lx, ly);
-      // Pass-through is re-asserted every 1.5 s even when unchanged: the OS-side flag and our memory of it can drift
-      // (seen after a second pet window was opened — pets kept animating but no window took clicks). Each window only
-      // ever sets ITS OWN flag from ITS OWN pixels.
-      const nowMs = performance.now();
-      if (visible !== lastHitVisible || nowMs - lastIgnoreAt > 1500) { lastHitVisible = visible; lastIgnoreAt = nowMs; await win.setIgnoreCursorEvents(!visible); }
-      // look-follow: vector from head point (top 25% of pet) to cursor
-      const headX = PAD_SIDE + dispW / 2, headY = PAD_TOP + dispH * 0.25;
-      engine.setLookVector(lx - headX, ly - headY);
-    } catch (e) { /* window may be closing */ }
+      visible = overPet || overUi || (careEl.style.display === 'block' && isOver(careEl, lx, ly)) || isOver(pawEl, lx, ly);
+    } catch (e) { pollFail('hit', e); }
+    // Pass-through is re-asserted every 1.5 s even when unchanged: the OS-side flag and our memory of it can drift
+    // (seen after a second pet window was opened — pets kept animating but no window took clicks). Each window only
+    // ever sets ITS OWN flag from ITS OWN pixels.
+    const nowMs = performance.now();
+    if (visible !== lastHitVisible || nowMs - lastIgnoreAt > 1500) {
+      lastHitVisible = visible; lastIgnoreAt = nowMs;
+      try { await win.setIgnoreCursorEvents(!visible); } catch (e) { pollFail('passthrough', e); lastHitVisible = null; }
+    }
+    pollDiag.ok++; pollDiag.lastOkAt = nowMs;
   }
+  // watchdog: if the loop has not completed for 3 s while the window is shown, make it clickable (safe default) and note it
+  setInterval(async () => {
+    if (!engine || hidden) return;
+    if (pollDiag.lastOkAt && performance.now() - pollDiag.lastOkAt > 3000) {
+      pollDiag.fails.watchdog = (pollDiag.fails.watchdog || 0) + 1; lastHitVisible = null; lastIgnoreAt = 0;
+      try { await win.setIgnoreCursorEvents(false); } catch (_) {}
+      if (pollDiag.fails.watchdog === 1) saveDebugLog();
+    }
+  }, 1500);
   function isOver(el, x, y) { if (el.style.display === 'none' || !el.offsetParent) return false; const r = el.getBoundingClientRect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; }
   setInterval(poll, 33);
   let lastStep = performance.now();
@@ -487,6 +596,7 @@
     const sf = await win.scaleFactor();
     dragStartCursor = (await cursorPosition()).toLogical(sf); dragStartWin = (await win.outerPosition()).toLogical(sf);
     dragging = true; dragMoved = false; mouseDownAt = performance.now(); prevCursorForV = null;
+    grabPoint = { x: (e.clientX - PAD_SIDE) / Math.max(1e-6, scale), y: (e.clientY - PAD_TOP) / Math.max(1e-6, scale) };
   });
   window.addEventListener('mouseup', async (e) => {
     if (!dragging) return;
@@ -500,8 +610,8 @@
     }
     else if (performance.now() - mouseDownAt < 400) { if (beh && beh.mode === 'peek') beh.unpeek(); else if (care && care.s.sleeping) care.wake(false); else { engine.click((e.clientY - PAD_TOP) / Math.max(1, dispH)); if (milestones) milestones.record('click'); } }
   });
-  // double-click = the care panel (chat is not a feature: every message would cost the user a request)
-  canvas.addEventListener('dblclick', (e) => { if (petAlphaAt(e.clientX, e.clientY) > 25) (careEl.style.display === 'block' ? closeCare() : openCare()); });
+  // no double-click action (0.8.12): quick repeated clicks used to pop the care panel by accident; the panel opens only
+  // from the 🐾 button and the right-click menu
   canvas.addEventListener('contextmenu', async (e) => { e.preventDefault(); if (petAlphaAt(e.clientX, e.clientY) > 25) await showMenu(); });
 
   async function keepOnScreen() {
@@ -576,6 +686,33 @@
       stopVoice(); currentAudio = new Audio(src); currentAudio.volume = 0.9; await currentAudio.play();
     } catch (_) {}
   }
+  // ---------- 0.8.12: every touch sounds at once, words only sometimes ----------
+  // A wordless reaction in the pet's own timbre plays on EVERY physical interaction (click / stroke / drag / drop /
+  // whip / feed / drink / sleep): instant, no clip to load, never throttled away. A spoken line (bubble + recorded
+  // clip) follows only with probability `chance` — a pet that talks on every poke is a jukebox, one that hums on
+  // every poke and sometimes says something is alive. Babble pets (animals) babble the line itself when chosen.
+  const REACT_CHANCE = { click: 0.35, clickBody: 0.35, clickMany: 1, stroke: 0.25, dragStart: 0.3, dragEnd: 0.45, hit: 0.3 };
+  const REACT_KIND = { click: 'click', clickBody: 'click', clickMany: 'angry', stroke: 'stroke', dragStart: 'drag', dragEnd: 'drop', hit: 'hit' };
+  let lastReactAt = 0, reactSeq = 0;
+  function reaction(kind, force) {
+    if (settings.muted || !pet) return;
+    const now = performance.now();
+    if (!force && now - lastReactAt < 160) return;
+    lastReactAt = now;
+    if (currentAudio && !currentAudio.paused && !currentAudio.ended) return;    // a spoken line is playing: don't talk over it
+    const k = KapiVoice.voiceKind(pet.manifest, voiceIndex); if (k === 'none') return;
+    const v = pet.manifest.voice || {};
+    if (currentBabble) { try { currentBabble.stop(); } catch (_) {} }
+    currentBabble = KapiVoice.renderBabble(KapiVoice.planReaction(kind, { preset: v.preset || (k === 'babble' ? 'bright' : 'female'), hz: v.baseHz, seed: ++reactSeq }), kind === 'hit' ? 0.55 : 0.42);
+  }
+  function react(event, lineKey, chance, fallbackText) {
+    const kind = REACT_KIND[event] || event;
+    const p = chance == null ? (REACT_CHANCE[event] == null ? 0.35 : REACT_CHANCE[event]) : chance;
+    const line = lineKey ? (care && care.host.line(lineKey)) || fallbackText || null : null;
+    if (line && Math.random() < p) { say(line, false, { force: kind === 'hit', hit: kind === 'hit' }); return; }
+    reaction(kind, kind === 'hit');
+  }
+
   function greet() {
     const h = new Date().getHours(); const k = h < 12 ? 'greetingMorning' : h >= 21 ? 'greetingEvening' : null;
     if (k && (pet.persona.lines || {})[k]) setTimeout(() => engine.sayFrom(k), 1200);
@@ -641,7 +778,6 @@
       await MenuItem.new({ text: T.teach.menu, action: teachExport }),
       await MenuItem.new({ text: T.teach.guide, action: openGuide }),
       await MenuItem.new({ text: T.menu.export, action: exportPet }),
-      await MenuItem.new({ text: T.menu.settings, action: openSettings }),
       await PredefinedMenuItem.new({ item: 'Separator' }),
       await MenuItem.new({ text: T.menu.hide, action: toggleHidden }),
       await MenuItem.new({ text: T.menu.quit, action: () => win.close() }),
@@ -662,7 +798,9 @@
     const { MenuItem, Submenu } = window.__TAURI__.menu;
     pets = await invoke('list_pets');
     const others = pets.filter(p => p.id !== pet.id && !Object.values(otherPets).some(o => o.id === p.id));
-    const items = await Promise.all(others.map(p => MenuItem.new({ text: p.name, action: () => invoke('open_pet_window', { id: p.id }).catch(e => toast(String(e))) })));
+    const items = await Promise.all(others.map(p => MenuItem.new({ text: p.name, action: () => { const r = winRect, m = monRect; let x = null, y = null;
+          if (r) { x = r.x + r.w + 24; y = r.y; if (m && x + r.w > m.x + m.w) x = Math.max(m.x, r.x - r.w - 24); }   // beside the caller, never on top of it
+          invoke('open_pet_window', { id: p.id, x, y }).catch(e => toast(String(e))); } })));
     const out = [];
     if (items.length) out.push(await Submenu.new({ text: T.menu2.summon, items }));
     if (!isMain) out.push(await MenuItem.new({ text: T.menu2.release, action: () => win.close() }));
@@ -713,18 +851,14 @@
     try { await invoke('export_pet', { dir: pet.dir, outPath: out }); toast(T.exported); } catch (e) { toast(T.exportFail + e, 5000); }
   }
   async function toggleHidden() { hidden = !hidden; if (hidden) { if (fxQueue) fxQueue.clear(); if (fxAbort) fxAbort.abort(); await win.hide(); } else { await win.show(); } }
-  async function openSettings() {
-    const { WebviewWindow } = window.__TAURI__.webviewWindow;
-    const existing = await WebviewWindow.getByLabel('settings'); if (existing) { await existing.setFocus(); return; }
-    const w = new WebviewWindow('settings', { url: 'settings.html?lang=' + encodeURIComponent(pet.persona.language || ''), title: T.settings.title, width: 460, height: 620, resizable: true });
-    w.once('tauri://error', (e) => toast('打不开设置：' + JSON.stringify(e.payload)));
-  }
+  // (the old "设置" window is gone in 0.8.12: its only control, display size, lives in the right-click 大小 submenu)
   listen('tray', async (e) => {
     const id = e.payload;
-    if (id === 'toggle') toggleHidden(); else if (id === 'import') importPet(); else if (id === 'switch') switchPet(); else if (id === 'export') exportPet(); else if (id === 'settings') openSettings();
+    if (id === 'toggle') toggleHidden(); else if (id === 'import') importPet(); else if (id === 'switch') switchPet(); else if (id === 'export') exportPet();
+    else if (id === 'diagnose') { const path = await saveDebugLog(); toast(`${win.label} ${pet ? pet.id : ''} · poll ok ${pollDiag.ok} · 失败 ${JSON.stringify(pollDiag.fails)} · ${pollDiag.lastErr || '无错误'} · 穿透=${lastHitVisible === null ? '?' : !lastHitVisible} · 日志 ${path}`, 9000); }
     else if (id === 'recover') { lastHitVisible = true; lastIgnoreAt = 0; try { await win.setIgnoreCursorEvents(false); } catch (_) {} hidden = false; try { await win.show(); } catch (_) {} }
   });
-  listen('modifier-state', (e) => { ctrlHeld = !!(e.payload && e.payload.ctrl); if (!ctrlHeld) { whipPrev = null; whipMarks = []; } });
+  listen('modifier-state', (e) => { ctrlHeld = !!(e.payload && e.payload.ctrl); if (!ctrlHeld) { whipPrev = null; whipMarks = []; whipTrail = []; whipFlash = null; drawWhip(); } });
   listen('user-input', (e) => { if (!engine) return; const p = e.payload || {}; engine.lastInput = performance.now() / 1000; if (beh) beh.onTyping(p.keys || 0); if (p.keys && garden) garden.onTypingSecond(p.keys); });
   listen('pet-rect', (e) => { const p = e.payload; if (!p || p.label === win.label || !beh) return; if (!otherPets[p.label]) lastIgnoreAt = 0; otherPets[p.label] = p; beh.onOtherPet(p.id, p.rect, p.name); });
   rectTimer = setInterval(() => { if (pet && winRect) window.__TAURI__.event.emit('pet-rect', { label: win.label, id: pet.id, name: pet.name, rect: winRect }); }, 800);
@@ -774,7 +908,14 @@
     } catch (_) {}
     const chosen = (wantedPetId && pets.find(p => p.id === wantedPetId)) || bundlePick || pets.find(p => p.id === settings.activePetId) || pets[0];
     try { await loadPet(chosen); } catch (e) { toast(String(e), 6000); }
-    if (!isMain) { await refreshRects(); if (monRect && winRect) await win.setPosition(new LogicalPosition(monRect.x + monRect.w * 0.3 + Math.random() * 200, winRect.y)); }
+    if (!engine) { try { await win.setIgnoreCursorEvents(true); } catch (_) {} }   // a window with no pet must never block clicks for the others
+    if (!isMain) {
+      await refreshRects();
+      const q = new URLSearchParams(location.search); const qx = parseFloat(q.get('x')), qy = parseFloat(q.get('y'));
+      if (Number.isFinite(qx) && Number.isFinite(qy)) await win.setPosition(new LogicalPosition(qx, qy));
+      else if (monRect && winRect) await win.setPosition(new LogicalPosition(monRect.x + monRect.w * 0.3 + Math.random() * 200, winRect.y));
+      await refreshRects();
+    }
   }
   render();
 })();

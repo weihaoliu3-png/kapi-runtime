@@ -8,7 +8,9 @@
   'use strict';
 
   // base pitch per preset (Hz) and syllable rate (syllables / second)
-  const PRESETS = { soft: { hz: 330, rate: 9, jitter: 0.08, vowel: 0.55 }, bright: { hz: 440, rate: 12, jitter: 0.14, vowel: 0.45 }, low: { hz: 240, rate: 8, jitter: 0.06, vowel: 0.65 } };
+  const PRESETS = { soft: { hz: 330, rate: 9, jitter: 0.08, vowel: 0.55 }, bright: { hz: 440, rate: 12, jitter: 0.14, vowel: 0.45 }, low: { hz: 240, rate: 8, jitter: 0.06, vowel: 0.65 },
+                    // human timbres (tts pets: voice.preset female|male) — used for the wordless reactions of 0.8.12
+                    female: { hz: 300, rate: 10, jitter: 0.10, vowel: 0.5 }, male: { hz: 165, rate: 9, jitter: 0.08, vowel: 0.6 } };
 
   function hash(str) { let h = 2166136261; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
   function rng(seed) { let s = seed || 1; return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; }; }
@@ -105,6 +107,36 @@
     return { notes, total: n * dur * 1.15 + dur * 0.6, rate: 1 / dur };
   }
 
+  /** Wordless reactions (0.8.12): the instant sound every touch gets, in the pet's own timbre, before / instead of a
+   *  spoken line. Each kind is a tiny melody; `seed` varies it a little so it never sounds like a sample on repeat.
+   *  kinds: click (hm?), stroke (mm~), drag (wobble), drop (oof), hit (ouch), feed (nom nom), drink (glug), sleep (yawn),
+   *  happy (giggle), angry (hmph). Returns a plan for renderBabble. */
+  function planReaction(kind, opts) {
+    const alias = { female: 'female', male: 'male' };
+    const pr = (opts && opts.preset) || 'bright';
+    const base = PRESETS[alias[pr] || pr] || PRESETS.bright;
+    const seed = (opts && opts.seed) || 0; const r = rng(seed * 7919 + 13);
+    const hz = (opts && opts.hz) || base.hz; const v = base.vowel;
+    const st = (semis, t, dur, vowel, gain) => ({ t, dur, hz: hz * Math.pow(2, semis / 12), vowel, gain });
+    const j = () => (r() - 0.5) * 1.5;
+    let notes = [];
+    switch (kind) {
+      case 'click':  notes = [st(2 + j(), 0, 0.09, v, 0.8), st(7 + j(), 0.1, 0.11, v + 0.1, 0.7)]; break;                         // "hm?" rising
+      case 'stroke': notes = [st(-1 + j(), 0, 0.16, v + 0.2, 0.55), st(3 + j(), 0.17, 0.2, v + 0.25, 0.6), st(6 + j(), 0.38, 0.22, v + 0.2, 0.5)]; break;   // "mm~" soft rise
+      case 'drag':   notes = [st(4 + j(), 0, 0.08, v, 0.8), st(-2 + j(), 0.09, 0.08, v, 0.75), st(5 + j(), 0.18, 0.08, v, 0.8), st(-1 + j(), 0.27, 0.1, v, 0.7)]; break;  // wobble
+      case 'drop':   notes = [st(3 + j(), 0, 0.07, v - 0.1, 0.95), st(-6 + j(), 0.08, 0.18, v + 0.1, 0.7)]; break;                  // "oof" falling
+      case 'feed':   notes = [st(0 + j(), 0, 0.09, v - 0.2, 0.8), st(-1 + j(), 0.12, 0.09, v - 0.2, 0.8), st(1 + j(), 0.24, 0.1, v - 0.1, 0.75)]; break;  // "nom nom"
+      case 'drink':  notes = [st(-4 + j(), 0, 0.14, v + 0.1, 0.8), st(-7 + j(), 0.15, 0.1, v + 0.2, 0.6)]; break;                  // "glug"
+      case 'sleep':  notes = [st(2 + j(), 0, 0.22, v + 0.3, 0.6), st(0 + j(), 0.23, 0.2, v + 0.3, 0.5), st(-5 + j(), 0.44, 0.3, v + 0.2, 0.4)]; break;   // yawn
+      case 'happy':  notes = [st(8 + j(), 0, 0.07, v, 0.8), st(11 + j(), 0.08, 0.07, v, 0.8), st(8 + j(), 0.16, 0.07, v, 0.8), st(12 + j(), 0.24, 0.09, v, 0.75)]; break; // giggle
+      case 'angry':  notes = [st(-3 + j(), 0, 0.12, v - 0.2, 0.9), st(-8 + j(), 0.13, 0.14, v - 0.1, 0.8)]; break;                 // "hmph"
+      case 'hit':    return planHit(Object.assign({}, opts, { preset: alias[pr] ? (pr === 'female' ? 'bright' : 'low') : pr }));
+      default:       notes = [st(j(), 0, 0.1, v, 0.7)];
+    }
+    const total = notes.reduce((m, n) => Math.max(m, n.t + n.dur), 0) + 0.05;
+    return { notes, total, rate: 10 };
+  }
+
   /** Whip crack: a filtered noise burst with a fast downward sweep plus a short click. Procedural, no asset.
    *  Returns a handle { stop() }; a no-op without WebAudio. */
   function whipCrack(volume) {
@@ -132,5 +164,5 @@
     return (voiceIndex && Object.keys(voiceIndex).length) ? 'tts' : 'babble';
   }
 
-  global.KapiVoice = { PRESETS, planBabble, renderBabble, voiceKind, syllableUnits, planHit, whipCrack };
+  global.KapiVoice = { PRESETS, planBabble, renderBabble, voiceKind, syllableUnits, planHit, planReaction, whipCrack };
 })(typeof window !== 'undefined' ? window : globalThis);

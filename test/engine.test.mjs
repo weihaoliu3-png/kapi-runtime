@@ -111,3 +111,24 @@ console.log('engine tests passed');
   for (let k = 0; k < 40; k++) { c4 += 0.1; e4.setLookVector(300, 0); } assert.equal(e4.look.current, 'r12', 'right = frame 12 after smoothing');
   c4 += 0.1; e4.setLookVector(5, 5); assert.equal(e4.look.current, 'base', 'deadzone');
   c4 += 0.03; const f4 = e4.frame(); assert.equal(f4.layers.length, 2, 'short crossfade into base'); console.log('ring ok'); }
+
+
+// 0.8.12: when the host provides onReact, triggers / stroke / clickMany go through it (reaction first, line sometimes) instead of sayFrom
+{ const reacts = []; const e2 = new PetEngine({ manifest, persona, images }, { now, onSay: () => {}, onReact: (ev, key) => reacts.push(ev + ':' + key) });
+  e2.hover = true; e2.click(0.3); e2.stroke(); e2.dragStart(); e2.dragEnd();
+  assert.deepEqual(reacts, ['click:click', 'stroke:pet', 'dragStart:dragStart', 'dragEnd:dragEnd'], 'onReact receives the event and its line key');
+  console.log('onReact routing ok'); }
+
+// 0.8.13 drag physics: hanging from the grab point, swing stays within +-16 deg, three hard reversals -> dizzy -> stagger on release
+{ const events = []; const e3 = new PetEngine({ manifest, persona, images }, { now, onSay: () => {}, onEvent: (ev) => events.push(ev) });
+  e3.dragStart({ x: 256, y: 60 });
+  assert.ok(e3.drag.active && e3.frame().pivot && e3.frame().pivot.x === 256, 'dragged frame rotates about the grab point');
+  let maxAng = 0;
+  for (let i = 0; i < 120; i++) { clock += 0.02; e3.dragMove(i % 10 < 5 ? 1500 : -1500, 0, 30000, 0); e3.update(); maxAng = Math.max(maxAng, Math.abs(e3.drag.ang)); }
+  assert.ok(maxAng > 0.05 && maxAng <= 16 * Math.PI / 180 + 1e-6, `swings (${(maxAng * 180 / Math.PI).toFixed(1)} deg) but never past 16 deg`);
+  assert.ok(events.filter(x => x === 'shake').length >= 3 && events.includes('dizzy'), 'hard reversals count as shakes and make it dizzy');
+  e3.dragEnd();
+  assert.equal(e3.state.action, 'stagger', 'dizzy release -> stagger'); assert.ok(events.includes('dizzyEnd'));
+  clock += 2; e3.update(); assert.equal(e3.state.action, 'idle', 'stagger ends by itself');
+  assert.equal(e3.frame().pivot, undefined, 'no pivot once released');
+  console.log('drag physics ok'); }

@@ -28,3 +28,16 @@ console.log('voice tests passed');
   assert.ok(hitB.notes.at(-1).hz < hitB.notes[0].hz, 'falls at the end');
   assert.doesNotThrow(() => KapiVoice.whipCrack(0.6).stop());
   console.log('whip sounds ok'); }
+
+
+// 0.8.12 wordless reactions: every kind yields a short plan in the pet's timbre; human presets exist; deterministic per seed
+{ const V = globalThis.KapiVoice;
+  for (const k of ['click', 'stroke', 'drag', 'drop', 'feed', 'drink', 'sleep', 'happy', 'angry', 'hit']) {
+    const pl = V.planReaction(k, { preset: 'female', seed: 3 });
+    assert.ok(pl.notes.length >= 2 && pl.total > 0.1 && pl.total < 1.2, `reaction ${k} is short (${pl.total})`);
+    for (const n of pl.notes) assert.ok(n.hz > 80 && n.hz < 2000, `reaction ${k} pitch sane`);
+  }
+  assert.ok(V.PRESETS.female.hz < V.PRESETS.bright.hz && V.PRESETS.male.hz < V.PRESETS.female.hz, 'human presets: male < female < bright');
+  const a = V.planReaction('click', { preset: 'male', seed: 5 }), b = V.planReaction('click', { preset: 'male', seed: 5 }), c = V.planReaction('click', { preset: 'male', seed: 6 });
+  assert.deepEqual(a, b, 'same seed -> same reaction'); assert.notDeepEqual(a, c, 'different seed -> varied');
+  console.log('reactions ok'); }

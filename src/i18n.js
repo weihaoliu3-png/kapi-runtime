@@ -3,7 +3,7 @@
   'use strict';
   const STRINGS = {
     'zh': {
-      hint: '拖我 · 点我 · 在我身上来回摸 · 双击照顾我 · 右键有菜单\n还想让我学什么？右键「教我新东西」，把你的想法告诉助手就行',
+      hint: '拖我 · 点我 · 在我身上来回摸 · 左上角 🐾 照顾我 · 右键有菜单\n还想让我学什么？右键「教我新东西」，把你的想法告诉助手就行',
       noPet: '还没有宠物：把 .petpack 拖到这里，或用托盘菜单导入',
       needNewer: '这个宠物包需要新版本的 Kapi，请重新下载',
       imported: (n, v) => `已导入「${n}」 v${v}`, importFail: '导入失败：', onlyOne: '只有这一只', switched: (n) => `切换到「${n}」`,
@@ -17,7 +17,7 @@
               fallback: { fed: '好吃。', watered: '咕咚。', pet: '嗯……舒服。', sleep: 'Zzz', wakeUp: '睡饱了。', wokenUp: '……谁叫我。', hungry: '……有点饿。', thirsty: '想喝水。', tired: '困了……', lonely: '你好久没理我了。' },
               titles: ['新手饲养员', '常客', '熟人', '好朋友', '铲屎官', '搭子', '家人', '老朋友', '知己', '灵魂伴侣'],
               rewards: { 2: '新台词包：撒娇', 3: '服装券 ×1', 4: '新台词包：碎碎念', 5: '服装券 ×1', 6: '成长阶段：少年期（体型 +10%）', 7: '服装券 ×1', 8: '新台词包：老朋友', 9: '节日皮肤券 ×1', 10: '成长阶段：成年期（体型 +20%）' } },
-      beh: { follow: '走哪跟哪。',  hide: '我躲一会儿。', coming: '来了来了。', perch: '这里视野不错。', perchHint: '点一下你想让我坐的窗口。', typingLong: '打这么多字，歇会儿？', lowBattery: '电量只剩 {p}% 了！', greet: '嗨，{name}。', thrown: '……你扔我？', cling: '扒住了扒住了！', climbBack: '差点掉下去。' },
+      beh: { follow: '走哪跟哪。',  hide: '我躲一会儿。', coming: '来了来了。', perch: '这里视野不错。', perchHint: '点一下你想让我坐的窗口。', typingLong: '打这么多字，歇会儿？', lowBattery: '电量只剩 {p}% 了！', greet: '嗨，{name}。', thrown: '……你扔我？', cling: '扒住了扒住了！', climbBack: '差点掉下去。', dizzy: '头、头好晕……' },
       wardrobe: { menu: '衣柜', default: '原装' },
       teach: { menu: '教我新东西 / 实现你的想法…', done: (f) => `已放到桌面：${f}。把它拖进助手对话，说你想让我学什么——菜单里没有的也行。`, guide: '使用说明', guideMissing: '说明文件不在这个宠物包里',
                empty: '去教我一个你自己想的动作…', learned: '我学会新东西啦！下次还可以继续教我。',
@@ -30,7 +30,7 @@
       settings: { title: 'Kapi 设置', display: '显示', scale: '显示大小 (0.5 – 2)', save: '保存' },
     },
     'en': {
-      hint: 'Drag me · click me · stroke me · double-click to care for me · right-click for menu\nWant me to learn more? Right-click → “Teach me something new” and tell the assistant your idea',
+      hint: 'Drag me · click me · stroke me · 🐾 top-left to care for me · right-click for menu\nWant me to learn more? Right-click → “Teach me something new” and tell the assistant your idea',
       noPet: 'No pet yet: drop a .petpack here or import from the tray menu',
       needNewer: 'This pet package needs a newer Kapi. Please download again.',
       imported: (n, v) => `Imported “${n}” v${v}`, importFail: 'Import failed: ', onlyOne: 'Only one pet here', switched: (n) => `Switched to “${n}”`,
@@ -44,7 +44,7 @@
               fallback: { fed: 'Yum.', watered: 'Gulp.', pet: 'Mm… nice.', sleep: 'Zzz', wakeUp: 'Slept well.', wokenUp: '…who woke me?', hungry: '…kinda hungry.', thirsty: 'Thirsty.', tired: 'Sleepy…', lonely: "You haven't talked to me in a while." },
               titles: ['Newcomer', 'Regular', 'Acquaintance', 'Good friend', 'Caretaker', 'Buddy', 'Family', 'Old friend', 'Confidant', 'Soulmate'],
               rewards: { 2: 'New lines: clingy', 3: 'Outfit ticket ×1', 4: 'New lines: rambling', 5: 'Outfit ticket ×1', 6: 'Growth: teen (size +10%)', 7: 'Outfit ticket ×1', 8: 'New lines: old friend', 9: 'Holiday skin ticket ×1', 10: 'Growth: adult (size +20%)' } },
-      beh: { follow: 'Right behind you.', hide: "I'll hide for a bit.", coming: 'Coming.', perch: 'Nice view up here.', perchHint: 'Click the window you want me to sit on.', typingLong: "That's a lot of typing. Break?", lowBattery: 'Battery is at {p}%!', greet: 'Hey, {name}.', thrown: '…did you just throw me?', cling: 'Hanging on!', climbBack: 'Almost fell.' },
+      beh: { follow: 'Right behind you.', hide: "I'll hide for a bit.", coming: 'Coming.', perch: 'Nice view up here.', perchHint: 'Click the window you want me to sit on.', typingLong: "That's a lot of typing. Break?", lowBattery: 'Battery is at {p}%!', greet: 'Hey, {name}.', thrown: '…did you just throw me?', cling: 'Hanging on!', climbBack: 'Almost fell.', dizzy: 'I… the room is spinning…' },
       wardrobe: { menu: 'Wardrobe', default: 'Original' },
       teach: { menu: 'Teach me something new / make your idea real…', done: (f) => `Saved to your Desktop: ${f}. Drop it into the assistant chat and say what I should learn — anything, not just the menu.`, guide: 'How to use', guideMissing: 'No guide file in this pet package',
                empty: 'Teach me a move you made up…', learned: 'I learned something new! You can keep teaching me.',

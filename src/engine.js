@@ -12,7 +12,8 @@
     jump:    (t) => { const p = Math.min(1, t / 0.6); return { dy: -40 * Math.sin(p * Math.PI), done: p >= 1 }; },
     wiggle:  (t) => { const p = Math.min(1, t / 0.8); return { rot: 4 * Math.sin(p * Math.PI * 6), done: p >= 1 }; },
     typing:  (t) => { const p = Math.min(1, t / 0.7); return { dy: 14 * Math.abs(Math.sin(p * Math.PI * 2)), rot: 3 * Math.sin(p * Math.PI * 2), done: p >= 1 }; },
-    dragWiggle: (t, ctx) => ({ dx: 7 * Math.sin(t * 19), rot: Math.max(-9, Math.min(9, -(ctx.dragVX || 0) * 0.025)) + 5 * Math.sin(t * 16) }),
+    dragWiggle: (t) => ({ dx: 4 * Math.sin(t * 19) }),                                   // the struggle; the swing itself is the pendulum (0.8.13)
+    stagger: (t) => { const p = Math.min(1, t / 1.6); const e = Math.exp(-t * 1.5); return { rot: 10 * Math.sin(t * 9) * e, dx: 8 * Math.sin(t * 6) * e, done: p >= 1 }; },   // dizzy after a hard shake
     // care fallbacks (used only when the pet has no eat / drink / sleep frames)
     eat:     (t) => { const D = 2.6; const p = Math.min(1, t / D); const chew = t > 1.1 && t < 2.2 ? 4 * Math.abs(Math.sin((t - 1.1) * Math.PI * 4)) : 0;
                       return { dy: chew, overlay: { icon: '🍙', from: [-0.35, 0.55], to: [0.08, 0.28], at: Math.min(1, t / 1.0), hide: t > 2.2 }, done: p >= 1 }; },
@@ -26,7 +27,7 @@
   class PetEngine {
     /**
      * @param {object} pkg  {manifest, persona, images: {base, blink, look:{d000..}, actions:{id:[img]}}}
-     * @param {object} opts {onSay(text, sticky), onAction(id), now()}
+     * @param {object} opts {onSay(text, sticky), onReact(event, lineKey) (0.8.12: wordless reaction first, line sometimes), onAction(id), now()}
      */
     constructor(pkg, opts) {
       this.m = pkg.manifest; this.p = pkg.persona; this.img = pkg.images; this.opts = opts || {};
@@ -39,7 +40,10 @@
       this.expr = { name: null, until: 0 };   // temporary expression frame (happy / surprised / sleepy)
       this.sleeping = false;                  // care system: sleeping keeps eyes closed and blocks random actions
       this.blink = { until: 0, next: this.now() + 3 + Math.random() * 4 };
-      this.drag = { active: false, vx: 0 };
+      // 0.8.13 drag physics: the pet hangs from the grab point like a pendulum (angle about the grab, driven by gravity
+      // and the hand's acceleration), and counts hard direction reversals -> dizzy
+      this.drag = { active: false, vx: 0, vy: 0, ax: 0, ay: 0, grab: null, ang: 0, angV: 0, shaken: false, dizzy: false, revs: [], lastVx: 0, lastT: 0 };
+      this.dizzyUntil = 0;
       this.lastInput = this.now(); this.lastRandom = this.now(); this.nextRandomIn = this._randIn();
       this.cooldown = {}; this.clickTimes = [];
       this.transitionFrom = null; this.transitionT0 = 0;
@@ -114,6 +118,7 @@
     }
 
     play(id, prio) {
+      if (id === 'stagger' && !this.m.actions.stagger) this.m.actions.stagger = { type: 'procedural', preset: 'stagger' };   // runtime-only, never in a pack
       const a = this.m.actions[id]; if (!a) return false;
       const p = prio ?? PRIORITY.user;
       if (p < this.state.prio && !this._finished()) return false;
@@ -126,7 +131,7 @@
     trigger(name, opts) {
       const tr = this.m.triggers[name]; if (!tr) return;
       if (tr.action) this.play(tr.action, name === 'dragStart' ? PRIORITY.drag : name.startsWith('chat') ? PRIORITY.chat : PRIORITY.user);
-      if (tr.say) this.sayFrom(tr.say);
+      if (tr.say) { if (this.opts.onReact) this.opts.onReact(name, tr.say); else this.sayFrom(tr.say); }
     }
 
     sayFrom(key) {
@@ -140,20 +145,57 @@
       this.clickTimes = this.clickTimes.filter(x => t - x < 10); this.clickTimes.push(t);
       if (this._wake()) return;                       // sleeping pet: a click just wakes it
       const sinceInput = t - (this._prevInput || t); this._prevInput = t;
-      if (this.clickTimes.length >= 4) { this.sayFrom('clickMany'); this.play('shake'); this.showExpression('angry', 2500); return; }
+      if (this.clickTimes.length >= 4) { if (this.opts.onReact) this.opts.onReact('clickMany', 'clickMany'); else this.sayFrom('clickMany'); this.play('shake'); this.showExpression('angry', 2500); return; }
       if (sinceInput > 600) { this.showExpression('surprised', 1500); }
       if (yRatio > 0.6 && this.m.triggers.clickBody) this.trigger('clickBody'); else this.trigger('click');
       this.showExpression('happy', 1200);
     }
     /** Called by the runtime when the cursor strokes the head (back-and-forth). */
     stroke() {
-      this.userInput(); this.showExpression('shy', 1000); this.sayFrom('pet');
+      this.userInput(); this.showExpression('shy', 1000); if (this.opts.onReact) this.opts.onReact('stroke', 'pet'); else this.sayFrom('pet');
       setTimeout(() => this.showExpression('happy', 1500), 1000);
       if (this.opts.onStroke) this.opts.onStroke(); return true;
     }
-    dragStart() { this.drag.active = true; this.lastInput = this.now(); this._wake(); this.trigger('dragStart'); }
-    dragMove(vx) { this.drag.vx = vx; if (Math.abs(vx) > 900) { this.drag.shaken = true; this.showExpression('surprised', 800); } }
-    dragEnd() { this.drag.active = false; this._toIdle(); this.trigger('dragEnd'); if (this.drag.shaken) { this.showExpression('angry', 2000); this.drag.shaken = false; } }
+    /** grab = where the hand took hold, in canvas px (null = top centre). */
+    dragStart(grab) {
+      const d = this.drag; d.active = true; d.grab = grab || { x: this.m.render.anchor[0], y: this.canvasH * 0.12 };
+      d.ang = 0; d.angV = 0; d.vx = d.vy = d.ax = d.ay = 0; d.revs = []; d.lastVx = 0; d.lastT = this.now(); d.dizzy = false; d.shaken = false;
+      this.lastInput = this.now(); this._wake(); this.trigger('dragStart');
+    }
+    dragMove(vx, vy, ax, ay) {
+      const d = this.drag; const t = this.now();
+      d.vx = vx; d.vy = vy || 0; d.ax = ax || 0; d.ay = ay || 0;
+      if (Math.abs(vx) > 900) { d.shaken = true; }
+      // a hard reversal = one shake; three within 2.5 s = dizzy (stars, surprised face, a sound per shake via onEvent)
+      if (d.lastVx && Math.sign(vx) !== Math.sign(d.lastVx) && Math.abs(vx) > 600 && Math.abs(d.lastVx) > 600) {
+        d.revs = d.revs.filter(x => t - x < 2.5); d.revs.push(t);
+        if (this.opts.onEvent) this.opts.onEvent('shake');
+        if (d.revs.length >= 3 && !d.dizzy) { d.dizzy = true; this.showExpression('surprised', 1500); if (this.opts.onEvent) this.opts.onEvent('dizzy'); }
+      }
+      if (Math.abs(vx) > 200) d.lastVx = vx;
+    }
+    dragEnd() {
+      const d = this.drag; d.active = false; this._toIdle(); this.trigger('dragEnd');
+      if (d.dizzy) {
+        this.dizzyUntil = this.now() + 1.8; this.play('stagger', PRIORITY.user); this.showExpression('angry', 2000);
+        if (this.opts.onEvent) this.opts.onEvent('dizzyEnd');
+      } else if (d.shaken) this.showExpression('angry', 2000);
+      d.dizzy = false; d.shaken = false; d.ang = 0; d.angV = 0; d.grab = null;
+    }
+    /** Pendulum step: the pet is a mass at its centre hanging from the grab point; the hand's acceleration is a
+     *  pseudo-force. Clamped to +-16 deg so the sprite stays inside its window. */
+    _stepPendulum(dt) {
+      const d = this.drag; if (!d.active || !d.grab) return;
+      const cx = this.m.render.anchor[0], cy = this.canvasH * 0.55;               // centre of mass, canvas px
+      const dx0 = cx - d.grab.x, dy0 = cy - d.grab.y; const L2 = Math.max(400, dx0 * dx0 + dy0 * dy0);
+      const c = Math.cos(d.ang), sn = Math.sin(d.ang); const rx = dx0 * c - dy0 * sn, ry = dx0 * sn + dy0 * c;
+      const g = 2600;                                                              // canvas px / s^2 (feels like a plush, not a brick)
+      const fx = -d.ax * 0.9, fy = g - d.ay * 0.5;
+      const torque = (rx * fy - ry * fx) / L2;
+      d.angV += torque * dt; d.angV *= Math.exp(-dt * 2.2); d.ang += d.angV * dt;
+      const lim = 16 * Math.PI / 180;
+      if (d.ang > lim) { d.ang = lim; d.angV = Math.min(0, d.angV) * 0.3; } else if (d.ang < -lim) { d.ang = -lim; d.angV = Math.max(0, d.angV) * 0.3; }
+    }
     userInput() { this._prevInput = this.lastInput; this.lastInput = this.now(); this._wake(); }
     /** Show a generated expression frame (layers.expressions[name]) for ms milliseconds while idle. */
     showExpression(name, ms) { if (this.img.expressions && this.img.expressions[name]) { this.expr = { name, until: this.now() + (ms || 1500) / 1000 }; } }
@@ -173,6 +215,7 @@
     // ---------- tick ----------
     update() {
       const t = this.now(); const s = this.state; const a = this.m.actions[s.action];
+      if (this.drag.active) { const dt = Math.min(0.05, Math.max(0.001, t - (this.drag.lastT || t))); this.drag.lastT = t; this._stepPendulum(dt); }
       if (a && a.type === 'frames') {
         const seq = s.waking ? (a.wake || []) : a.sequence;
         const hold = 1 / Math.max(1, a.fps);
@@ -279,6 +322,7 @@
         this._lv.x += (this.lookVec.x - this._lv.x) * k; this._lv.y += (this.lookVec.y - this._lv.y) * k;
         tf.dx = (tf.dx || 0) + this._lv.x * 5; tf.dy = (tf.dy || 0) + this._lv.y * 3;
       }
+      if (this.drag.active && this.drag.grab) { tf.rot = (tf.rot || 0) + this.drag.ang * 180 / Math.PI; tf.pivot = this.drag.grab; tf.sy = (tf.sy || 1) * 1.025; }   // hanging from the hand
       if (this.m.source && this.m.source.cropped && a.preset === 'bounce') { tf.sx = 1; tf.sy = 1; }
       if (a.type === 'procedural' && (a.preset === 'eat' || a.preset === 'drink') && this.img.expressions && this.img.expressions.happy && (t - s.t0) > 1.1) layers[layers.length - 1] = { img: this.img.expressions.happy, alpha: 1 };
       return { layers, ...tf };
@@ -286,7 +330,8 @@
 
     /** Draw into a 2D context; scale = display px per canvas px. */
     draw(ctx, scale, originX, originY) {
-      const f = this.frame(); const ax = this.m.render.anchor[0], ay = this.m.render.anchor[1];
+      const f = this.frame(); const anchorX = this.m.render.anchor[0], anchorY = this.m.render.anchor[1];
+      const ax = f.pivot ? f.pivot.x : anchorX, ay = f.pivot ? f.pivot.y : anchorY;     // rotate about the grab point while dragged
       ctx.save();
       ctx.translate(originX + ax * scale + f.dx * scale, originY + ay * scale + f.dy * scale);
       ctx.rotate((f.rot + (this.extraRot || 0)) * Math.PI / 180);
