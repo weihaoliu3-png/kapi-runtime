@@ -190,7 +190,12 @@
       }
       if (s.action === 'drag' && !this.drag.active) this._toIdle();
       // blink
-      if (t >= this.blink.next && this.img.blink && (s.action === 'idle')) { this.blink.until = t + 0.1; this.blink.next = t + 3 + Math.random() * 4; }
+      // 0.8.10: blink only while resting on base. The blink / expression images are the idle front's family; while the
+      // head follows the cursor the look frames are on screen, and a 100 ms cut to the front reads as "jumped to another picture".
+      if (t >= this.blink.next && this.img.blink && (s.action === 'idle')) {
+        if (this.look.current === 'base') this.blink.until = t + 0.1;
+        this.blink.next = t + 3 + Math.random() * 4;
+      }
       // idle random
       const tr = this.m.triggers;
       if (s.action === 'idle' && !this.sleeping && !this.drag.active && t - this.lastRandom > this.nextRandomIn && !this.hover) {
@@ -227,9 +232,12 @@
         return (this.img.actions[s.action] || [])[idx] || this.img.base;
       }
       if (this.sleeping) return (this.img.expressions && this.img.expressions.sleepy) || this.img.blink || this.img.base;
+      // while a look frame is on screen, expressions and blinks wait: they are drawn from the idle front, and cutting to it
+      // mid-follow is the "jumps back to the default picture" of the v5 retro. Touch / click happen inside the deadzone
+      // (current === 'base'), so the expressions the user triggers by hand still show at once.
+      if (this.look.current !== 'base') return this._lookImg(this.look.current);
       if (this.now() < this.expr.until && this.img.expressions && this.img.expressions[this.expr.name]) return this.img.expressions[this.expr.name];
       if (this.now() < this.blink.until && this.img.blink) return this.img.blink;
-      if (this.look.current !== 'base') return this._lookImg(this.look.current);
       return this.img.base;
     }
 

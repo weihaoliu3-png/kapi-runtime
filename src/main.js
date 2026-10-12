@@ -58,7 +58,7 @@
   let settingsFile = '';
   let pets = [], pet = null, engine = null, scale = 1, dispW = 0, dispH = 0, hidden = false;
   let lastCursor = null, lastCursorMove = 0, dragging = false, dragStartCursor = null, dragStartWin = null, dragMoved = false, mouseDownAt = 0;
-  let prevCursorForV = null, prevT = 0, lastHitVisible = true, bubbleTimer = null, bubbleSticky = false, dragV = { x: 0, y: 0, t: 0 };
+  let prevCursorForV = null, prevT = 0, lastHitVisible = true, lastIgnoreAt = 0, bubbleTimer = null, bubbleSticky = false, dragV = { x: 0, y: 0, t: 0 };
   let reminderState = {};
 
   // ---------- helpers ----------
@@ -422,7 +422,11 @@
         if (rev >= 3) { stroke.xs = []; if (engine.stroke()) care.do('pet', { silent: true }); }
       } else stroke.xs = [];
       const visible = overPet || overUi || (careEl.style.display === 'block' && isOver(careEl, lx, ly)) || isOver(pawEl, lx, ly);
-      if (visible !== lastHitVisible) { lastHitVisible = visible; await win.setIgnoreCursorEvents(!visible); }
+      // Pass-through is re-asserted every 1.5 s even when unchanged: the OS-side flag and our memory of it can drift
+      // (seen after a second pet window was opened — pets kept animating but no window took clicks). Each window only
+      // ever sets ITS OWN flag from ITS OWN pixels.
+      const nowMs = performance.now();
+      if (visible !== lastHitVisible || nowMs - lastIgnoreAt > 1500) { lastHitVisible = visible; lastIgnoreAt = nowMs; await win.setIgnoreCursorEvents(!visible); }
       // look-follow: vector from head point (top 25% of pet) to cursor
       const headX = PAD_SIDE + dispW / 2, headY = PAD_TOP + dispH * 0.25;
       engine.setLookVector(lx - headX, ly - headY);
@@ -683,10 +687,11 @@
   listen('tray', async (e) => {
     const id = e.payload;
     if (id === 'toggle') toggleHidden(); else if (id === 'import') importPet(); else if (id === 'switch') switchPet(); else if (id === 'export') exportPet(); else if (id === 'settings') openSettings();
+    else if (id === 'recover') { lastHitVisible = true; lastIgnoreAt = 0; try { await win.setIgnoreCursorEvents(false); } catch (_) {} hidden = false; try { await win.show(); } catch (_) {} }
   });
   listen('modifier-state', (e) => { ctrlHeld = !!(e.payload && e.payload.ctrl); if (!ctrlHeld) { whipPrev = null; whipMarks = []; } });
   listen('user-input', (e) => { if (!engine) return; const p = e.payload || {}; engine.lastInput = performance.now() / 1000; if (beh) beh.onTyping(p.keys || 0); if (p.keys && garden) garden.onTypingSecond(p.keys); });
-  listen('pet-rect', (e) => { const p = e.payload; if (!p || p.label === win.label || !beh) return; otherPets[p.label] = p; beh.onOtherPet(p.id, p.rect, p.name); });
+  listen('pet-rect', (e) => { const p = e.payload; if (!p || p.label === win.label || !beh) return; if (!otherPets[p.label]) lastIgnoreAt = 0; otherPets[p.label] = p; beh.onOtherPet(p.id, p.rect, p.name); });
   rectTimer = setInterval(() => { if (pet && winRect) window.__TAURI__.event.emit('pet-rect', { label: win.label, id: pet.id, name: pet.name, rect: winRect }); }, 800);
   batteryTimer = setInterval(async () => { if (!beh) return; try { beh.onBattery(await invoke('battery_status')); } catch (_) {} }, 60000);
   // Foreground-window tracking. The pet itself becomes the foreground window the moment the user right-clicks it, so
@@ -713,12 +718,26 @@
   win.onDragDropEvent(async (e) => { if (e.payload.type === 'drop' && e.payload.paths?.length) await importPet(e.payload.paths[0]); });
 
   // ---------- boot ----------
+  try { await win.setIgnoreCursorEvents(false); } catch (_) {}      // known starting state for every pet window (main and summoned)
   await loadSettings();
   await win.setAlwaysOnTop(!!settings.alwaysOnTop);
   pets = await invoke('list_pets');
   if (!pets.length) { toast(T.noPet, 8000); }
   else {
-    const chosen = (wantedPetId && pets.find(p => p.id === wantedPetId)) || pets.find(p => p.id === settings.activePetId) || pets[0];
+    // A first-delivery bundle names its pet (bundle.json next to the exe). The first start from that bundle makes
+    // that pet the active one — once per bundleId — so a user who had an older pet does not keep seeing it; after
+    // that the user's own choice (switch / import) stands.
+    let bundlePick = null;
+    try {
+      const b = await invoke('bundle_info');
+      if (b && b.bundleId && b.defaultPetId && !(settings.seenBundles || []).includes(b.bundleId)) {
+        bundlePick = pets.find(p => p.id === b.defaultPetId) || null;
+        settings.seenBundles = [...(settings.seenBundles || []), b.bundleId].slice(-20);
+        if (bundlePick) settings.activePetId = bundlePick.id;
+        await saveSettings();
+      }
+    } catch (_) {}
+    const chosen = (wantedPetId && pets.find(p => p.id === wantedPetId)) || bundlePick || pets.find(p => p.id === settings.activePetId) || pets[0];
     try { await loadPet(chosen); } catch (e) { toast(String(e), 6000); }
     if (!isMain) { await refreshRects(); if (monRect && winRect) await win.setPosition(new LogicalPosition(monRect.x + monRect.w * 0.3 + Math.random() * 200, winRect.y)); }
   }
