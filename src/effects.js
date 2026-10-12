@@ -82,7 +82,7 @@
         if (effect === 'bubbleTea') {
           if (t < thr.hitAt) { const p = thr.at(t); drawCup(ctx, p.x, p.y, cupSize, p.rot, opts.cup); }
           else {
-            if (!pearls) { pearls = planPearls(thr.hitPoint, 36); splat = { p: thr.hitPoint, t0: t }; }
+            if (!pearls) { pearls = planPearls(thr.hitPoint, 36); splat = { p: thr.hitPoint, t0: t }; if (opts.onHit) { try { opts.onHit(thr.hitPoint); } catch (_) {} } }   // 0.8.15: sound cue at the burst
             drawSplat(ctx, splat.p, cupSize * (opts.local ? 1.65 : 1.6), (opts.local ? 0.65 : 1) * Math.max(0, 1 - (t - splat.t0) / 2.4));
             for (const q of pearls) {
               q.life -= dt; if (q.life <= 0) continue;

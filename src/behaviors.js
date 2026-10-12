@@ -75,7 +75,7 @@
       if (y < m.y) y = Math.max(m.y, rect.y);                                   // maximised: sit inside the corner
       x = Math.min(Math.max(x, m.x), m.x + m.w - petW);
       y = Math.min(y, m.y + m.h - petFootY);
-      this.target = { x, y }; this.flip = x < w.x; this._perchMove = true; this.perchedOnce = true; return true;
+      this.target = { x, y }; this.flip = x < w.x; this._perchMove = true; if (!this.perchedOnce && this.h.sfx) this.h.sfx('knock', 0.35); this.perchedOnce = true; return true;
     }
     /** Called by the host every poll while in perch mode and no window has been found yet: hint once after 3s. */
     perchNoWindow() {
@@ -92,7 +92,7 @@
       if (this.typing.fastStreak >= 2 && t - this.typing.lastBurst >= 8 && !this.h.engine.sleeping) {
         this.typing.lastBurst = t;
         this.h.expr('surprised', 1200);
-        this.h.play('shake');
+        this.h.play('shake'); if (this.h.react) this.h.react('surprise');
         const line = this.h.line('typingFast'); if (line) this.h.say(line);
       }
       // One detected press is enough: the 80ms global-input poll can miss fast press/release pairs.
@@ -100,18 +100,18 @@
       if (keys > 0 && t - this.typing.lastNod >= 1.5 && !this.h.engine.sleeping && this.h.engine.state.action === 'idle') {
         const acts = (this.h.engine.m && this.h.engine.m.actions) || {};
         const action = acts.typing ? 'typing' : (acts.nod ? 'nod' : null);
-        if (action && this.h.engine.play(action, global.PET_PRIORITY.random)) this.typing.lastNod = t;
+        if (action && this.h.engine.play(action, global.PET_PRIORITY.random)) { this.typing.lastNod = t; if (this.h.react) this.h.react('typing', 0.28); }   // 0.8.15: a soft note with every nod
       }
       if (this.typing.count > 400) { this.typing.count = 0; this.h.say(this.h.line('typingLong') || this.h.t().beh.typingLong); }
     }
     onBattery(info) {
       if (!info) return; const t = performance.now() / 1000;
-      if (info.percent <= 20 && !info.charging && t - this.lastLowBattery > 900) { this.lastLowBattery = t; this.h.expr('surprised', 2500); this.h.say((this.h.line('lowBattery') || this.h.t().beh.lowBattery).replace('{p}', Math.round(info.percent)), true); }
+      if (info.percent <= 20 && !info.charging && t - this.lastLowBattery > 900) { this.lastLowBattery = t; this.h.expr('surprised', 2500); if (this.h.react) this.h.react('whine'); this.h.say((this.h.line('lowBattery') || this.h.t().beh.lowBattery).replace('{p}', Math.round(info.percent)), true); }
     }
     onOtherPet(id, rect, name) {
       const w = this.h.getWin(); if (!w || !rect) return;
       const overlap = !(rect.x > w.x + w.w || rect.x + rect.w < w.x); const t = performance.now() / 1000;
-      if (overlap && t - (this.lastGreet[id] || -1e9) > 300) { this.lastGreet[id] = t; this.h.expr('happy', 2500); this.h.say((this.h.line('greet') || this.h.t().beh.greet).replace('{name}', name || '')); this.h.play('wave'); }
+      if (overlap && t - (this.lastGreet[id] || -1e9) > 300) { this.lastGreet[id] = t; this.h.expr('happy', 2500); if (this.h.react) this.h.react('greet'); this.h.say((this.h.line('greet') || this.h.t().beh.greet).replace('{name}', name || '')); this.h.play('wave'); }
     }
 
     // ---------- per-frame motion; returns {x,y,rot,flip} or null when nothing to move ----------
@@ -125,8 +125,8 @@
         if (x <= m.x - w.w * 0.6) { x = m.x - w.w * 0.6; this.v.x = -this.v.x * BOUNCE; }
         if (x >= m.x + m.w - w.w * 0.4) { x = m.x + m.w - w.w * 0.4; this.v.x = -this.v.x * BOUNCE; }
         const settled = this.v.y === 0 && Math.abs(this.v.x) < 20 && y >= floor - 1;
-        if (settled) { this.mode = 'idle'; this.v = { x: 0, y: 0 }; this.h.play('drop'); this.h.expr('angry', 2000); this.h.say(this.h.line('thrown') || this.h.t().beh.thrown); return { x, y: floor, rot: 0, flip: this.flip, landed: true }; }
-        if (bounced && Math.abs(this.v.y) > 200) this.h.play('drop');
+        if (settled) { this.mode = 'idle'; this.v = { x: 0, y: 0 }; this.h.play('drop'); this.h.expr('angry', 2000); if (this.h.sfx) this.h.sfx('thud', 0.5); if (this.h.react) this.h.react('drop'); this.h.say(this.h.line('thrown') || this.h.t().beh.thrown); return { x, y: floor, rot: 0, flip: this.flip, landed: true }; }
+        if (bounced && Math.abs(this.v.y) > 200) { this.h.play('drop'); if (this.h.sfx) this.h.sfx('thud', 0.3); }
         const rot = Math.max(-25, Math.min(25, this.v.x * 0.02));
         return { x, y, rot, flip: this.flip };
       }
@@ -144,7 +144,7 @@
       }
       // edge cling: pet mostly off-screen after a drag
       if (this.mode === 'cling') {
-        if (performance.now() / 1000 > this.clingUntil) { const x = Math.min(Math.max(w.x, m.x), m.x + m.w - w.w); this.mode = 'walk'; this.target = { x, y: w.y }; this.flip = x < w.x; this.h.say(this.h.line('climbBack') || this.h.t().beh.climbBack); }
+        if (performance.now() / 1000 > this.clingUntil) { const x = Math.min(Math.max(w.x, m.x), m.x + m.w - w.w); this.mode = 'walk'; this.target = { x, y: w.y }; this.flip = x < w.x; if (this.h.react) this.h.react('happy'); this.h.say(this.h.line('climbBack') || this.h.t().beh.climbBack); }
         return null;
       }
       return null;
@@ -152,7 +152,7 @@
     checkEdgeAfterDrag() {
       const w = this.h.getWin(), m = this.h.getMonitor(); if (!w || !m) return false;
       const offL = m.x - w.x, offR = (w.x + w.w) - (m.x + m.w);
-      if (offL > w.w * 0.35 || offR > w.w * 0.35) { this.mode = 'cling'; this.clingUntil = performance.now() / 1000 + 4; this.h.expr('surprised', 2000); this.h.say(this.h.line('cling') || this.h.t().beh.cling); return true; }
+      if (offL > w.w * 0.35 || offR > w.w * 0.35) { this.mode = 'cling'; this.clingUntil = performance.now() / 1000 + 4; this.h.expr('surprised', 2000); if (this.h.sfx) this.h.sfx('knock', 0.4); if (this.h.react) this.h.react('surprise'); this.h.say(this.h.line('cling') || this.h.t().beh.cling); return true; }
       return false;
     }
   }

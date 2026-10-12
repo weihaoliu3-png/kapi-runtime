@@ -25,7 +25,7 @@
   let milestones = null, garden = null, props = { cup: null, flowers: {} }, videoFx = {}, interState = null, fxAbort = null, fxRun = 0, fxQueue = null;
   // Built-in real-video effects shipped with the runtime (src/fx/<id>/000..N.webp): every pet has them; a package may
   // override one with its own effects.<id>. Loaded on first use, kept for the session.
-  const BUILTIN_FX = { bubbleTea: { type: 'videoFrames', frames: 41, fps: 18, ext: 'webp' } };
+  const BUILTIN_FX = { bubbleTea: { type: 'videoFrames', frames: 41, fps: 18, ext: 'webp', hitFrame: 22 } };   // hitFrame: where the cup bursts (sound cue)
   const builtinFxCache = {};
   function loadBuiltinFx(id) {
     if (builtinFxCache[id]) return builtinFxCache[id];
@@ -92,7 +92,7 @@
     // an outfit that carries its own 8 directions is followed with THOSE frames while worn, even if the default
     // outfit uses a 48-frame ring (the ring was filmed in the default clothes) — 0.8.9
     if (currentOutfit !== 'default' && L.look && manifest.lookFollow && manifest.lookFollow.mode === 'ring') {
-      manifest.lookFollow = { ...manifest.lookFollow, mode: 'frames8', holdMs: 150, crossfadeMs: 260 };
+      manifest.lookFollow = { ...manifest.lookFollow, mode: 'frames8', holdMs: 80, crossfadeMs: 55 };
     }
     const images = { base: await loadImage(join(info.dir, L.base)), blink: null, look: {}, actions: {} };
     if (L.blink) images.blink = await loadImage(join(info.dir, L.blink));
@@ -140,6 +140,7 @@
       getWin: () => winRect, getMonitor: () => monRect, getCursor: () => cursorLogical, engine,
       setWin: () => {}, say: (x, st) => say(x, st), expr: (n, ms) => engine.showExpression(n, ms),
       play: (id) => { if (pet.manifest.actions[id]) engine.play(id); }, line: (k) => care.host.line(k), t,
+      react: (kind, vol) => reaction(kind, true, vol), sfx: (name, vol) => sound(name, vol),      // 0.8.15: every behaviour sounds
     });
     if (isMain) { settings.activePetId = info.id; await saveSettings(); }
     greet();
@@ -194,7 +195,8 @@
     if (fxAbort) fxAbort.abort();
     fxQueue = new KapiFx.Queue((effect, m) => playEffect(effect, m));
     milestones = new Milestones(pet.manifest.milestones, { now, state: st, save, say: (k) => say(lineOr(k)), fire: (effect, m) => fxQueue.request(effect, m) });
-    garden = new Garden(pet.manifest.garden, { now, state: st, save, say: (k) => say(lineOr(k)), onPick: () => milestones.record('flower') });
+    garden = new Garden(pet.manifest.garden, { now, state: st, save, say: (k) => say(lineOr(k)), onPick: () => milestones.record('flower'),
+      sfx: (name, vol) => sound(name, vol), react: (kind) => reaction(kind, true) });
   }
   /** Head anchor (window px): top-centre of the pet, where the flower sits; and hand anchor for the cup throw. */
   function headPoint() { return { x: PAD_SIDE + dispW / 2, y: PAD_TOP + dispH * 0.04 }; }
@@ -246,17 +248,20 @@
       let framesP = spec && spec.type === 'videoFrames' ? videoFx[effect] : null;
       if (!framesP && BUILTIN_FX[effect]) { spec = BUILTIN_FX[effect]; framesP = loadBuiltinFx(effect); }   // the runtime's own real-video tea
       const isVideo = !!framesP;
+      const scene = effect === 'bubbleTea' ? 'throw' : 'fall';
+      if (scene === 'throw') sound('whoosh', 0.45); else sound('chime', 0.35);                 // 0.8.15: every effect has its sound
       if (isVideo) { engine.play(pet.manifest.actions[m && m.action] ? m.action : (pet.manifest.actions.throw ? 'throw' : (pet.manifest.actions.wave ? 'wave' : 'nod'))); engine.flip = dir < 0; }
       else engine.showExpression('happy', 3000);
       let frames = null;
       if (isVideo) { try { frames = await framesP; } catch (_) { frames = null; } }
       if (frames && frames.length && !frames.some(f => !f)) {
+        if (scene === 'throw') { const hf = spec.hitFrame != null ? spec.hitFrame : Math.floor(frames.length * 0.5); setTimeout(() => { if (run === fxRun && !controller.signal.aborted) sound('splat', 0.55); }, hf * 1000 / spec.fps); }
         const extraTop = (PAD_TOP - BASE_PAD_TOP) * (window.devicePixelRatio || 1);
         await KapiFx.playVideoFrames(fxCtx, fxCanvas.width, fxCanvas.height, frames, spec.fps,
           { signal: controller.signal, viewport: { x: 0, y: extraTop, width: fxCanvas.width, height: fxCanvas.height - extraTop } });
       } else {
         await KapiFx.play(fxCtx, fxCanvas.width, fxCanvas.height, window.devicePixelRatio || 1, effect,
-          { from, dir, cup: props.cup, color: (pet.manifest.garden || {}).color, local: true, signal: controller.signal });
+          { from, dir, cup: props.cup, color: (pet.manifest.garden || {}).color, local: true, signal: controller.signal, onHit: () => sound('splat', 0.55) });
       }
     } catch (e) { toast(String(e).slice(0, 80), 3000); }
     finally { if (run === fxRun) { fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height); engine.flip = false; fxAbort = null; } }
@@ -270,7 +275,7 @@
       say: (t, sticky) => say(t, sticky), expr: (n, ms) => engine.showExpression(n, ms),
       play: (id) => { if (!pet.manifest.actions[id] && (id === 'eat' || id === 'drink')) pet.manifest.actions[id] = { type: 'procedural', preset: id }; if (pet.manifest.actions[id]) engine.play(id); else engine.play('nod'); pendingAfterCare(id); },
       pending: (id) => pendingAfterCare(id),
-      react: (kind, key, chance, fb) => react(kind, key, chance, fb),
+      react: (kind, key, chance, fb) => react(kind, key, chance, fb), sfx: (name, vol) => sound(name, vol),
       setSleeping: (on) => engine.setSleeping(on), setStageScale: async (k) => { stageScale = k; await applyScale(); }, toast: (m) => toast(m, 4000),
       save: (state) => invoke('write_text', { path: stateFile, content: JSON.stringify(state) }).catch(() => {}), t,
       line: (key) => { const L = (pet.persona.lines || {})[key]; return L && L.length ? L[Math.floor(Math.random() * L.length)] : null; },
@@ -282,6 +287,7 @@
       const w = care.tick(); if (careEl.style.display === 'block') { care.renderPanel(careEl); queueCareLayout(true); }
       if (w.length && Math.random() < 0.35 && engine.state.action === 'idle' && !care.s.sleeping) {
         const key = w[Math.floor(Math.random() * w.length)];
+        reaction(key === 'tired' ? 'sleep' : key === 'lonely' ? 'whine' : 'whine', true);
         say(care.host.line(key) || T.care.fallback[key]);
         if (key === 'tired') engine.showExpression('sleepy', 2500); else if (key === 'lonely') engine.showExpression('sad', 2500); else engine.showExpression('sad', 1500);
       }
@@ -671,13 +677,15 @@
     if (kind === 'none') return;
     const v = pet.manifest.voice || {};
     if (kind === 'babble') {
-      const plan = opts.hit ? KapiVoice.planHit({ preset: v.preset || 'bright', hz: v.baseHz ? v.baseHz * 1.45 : undefined, seed: seq })
+      const plan = v.species ? KapiVoice.planAnimal(v.species, opts.hit ? 'hit' : 'talk', { text, hz: v.baseHz, seed: seq })          // a real animal meows / barks its line (0.8.14)
+                 : opts.hit ? KapiVoice.planHit({ preset: v.preset || 'bright', hz: v.baseHz ? v.baseHz * 1.45 : undefined, seed: seq })
                             : KapiVoice.planBabble(text, { preset: v.preset || 'bright', hz: v.baseHz, rate: v.rate });
       currentBabble = KapiVoice.renderBabble(plan, opts.hit ? 0.55 : 0.45); return;
     }
     const rel = voiceIndex[text];
-    if (!rel) {                                      // tts pet, no clip for this line: bubble only — except a hit, which gets the babble ouch
+    if (!rel) {                                      // tts pet, no clip for this line: a wordless sound in its own timbre, never silence (0.8.15)
       if (opts.hit) currentBabble = KapiVoice.renderBabble(KapiVoice.planHit({ preset: v.preset || 'female', seed: seq }), 0.55);
+      else currentBabble = KapiVoice.renderBabble(KapiVoice.planReaction(opts.kind || 'click', { preset: v.preset || 'female', hz: v.baseHz, seed: seq }), 0.4);
       return;
     }
     try {
@@ -694,7 +702,7 @@
   const REACT_CHANCE = { click: 0.35, clickBody: 0.35, clickMany: 1, stroke: 0.25, dragStart: 0.3, dragEnd: 0.45, hit: 0.3 };
   const REACT_KIND = { click: 'click', clickBody: 'click', clickMany: 'angry', stroke: 'stroke', dragStart: 'drag', dragEnd: 'drop', hit: 'hit' };
   let lastReactAt = 0, reactSeq = 0;
-  function reaction(kind, force) {
+  function reaction(kind, force, volume) {
     if (settings.muted || !pet) return;
     const now = performance.now();
     if (!force && now - lastReactAt < 160) return;
@@ -703,13 +711,18 @@
     const k = KapiVoice.voiceKind(pet.manifest, voiceIndex); if (k === 'none') return;
     const v = pet.manifest.voice || {};
     if (currentBabble) { try { currentBabble.stop(); } catch (_) {} }
-    currentBabble = KapiVoice.renderBabble(KapiVoice.planReaction(kind, { preset: v.preset || (k === 'babble' ? 'bright' : 'female'), hz: v.baseHz, seed: ++reactSeq }), kind === 'hit' ? 0.55 : 0.42);
+    const plan = v.species ? KapiVoice.planAnimal(v.species, kind, { hz: v.baseHz, seed: ++reactSeq })
+                           : KapiVoice.planReaction(kind, { preset: v.preset || (k === 'babble' ? 'bright' : 'female'), hz: v.baseHz, seed: ++reactSeq });
+    currentBabble = KapiVoice.renderBabble(plan, volume != null ? volume : kind === 'hit' ? 0.55 : 0.42);
   }
+  /** Scene sound (thud / whoosh / splat / pop / bloom / pluck / chime / fanfare / knock): not the pet's voice, so it
+   *  plays even for voice.kind = none and alongside a line; only the mute switch silences it. */
+  function sound(name, volume) { if (settings.muted || !pet) return; try { KapiVoice.sfx(name, volume); } catch (_) {} }
   function react(event, lineKey, chance, fallbackText) {
     const kind = REACT_KIND[event] || event;
     const p = chance == null ? (REACT_CHANCE[event] == null ? 0.35 : REACT_CHANCE[event]) : chance;
     const line = lineKey ? (care && care.host.line(lineKey)) || fallbackText || null : null;
-    if (line && Math.random() < p) { say(line, false, { force: kind === 'hit', hit: kind === 'hit' }); return; }
+    if (line && Math.random() < p) { say(line, false, { force: kind === 'hit', hit: kind === 'hit', kind }); return; }
     reaction(kind, kind === 'hit');
   }
 
@@ -860,6 +873,7 @@
   });
   listen('modifier-state', (e) => { ctrlHeld = !!(e.payload && e.payload.ctrl); if (!ctrlHeld) { whipPrev = null; whipMarks = []; whipTrail = []; whipFlash = null; drawWhip(); } });
   listen('user-input', (e) => { if (!engine) return; const p = e.payload || {}; engine.lastInput = performance.now() / 1000; if (beh) beh.onTyping(p.keys || 0); if (p.keys && garden) garden.onTypingSecond(p.keys); });
+  // (the typing sound itself comes from Behaviors.onTyping -> host.react('typing'): one soft note per nod, never while sleeping)
   listen('pet-rect', (e) => { const p = e.payload; if (!p || p.label === win.label || !beh) return; if (!otherPets[p.label]) lastIgnoreAt = 0; otherPets[p.label] = p; beh.onOtherPet(p.id, p.rect, p.name); });
   rectTimer = setInterval(() => { if (pet && winRect) window.__TAURI__.event.emit('pet-rect', { label: win.label, id: pet.id, name: pet.name, rect: winRect }); }, 800);
   batteryTimer = setInterval(async () => { if (!beh) return; try { beh.onBattery(await invoke('battery_status')); } catch (_) {} }, 60000);

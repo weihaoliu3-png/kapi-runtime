@@ -82,3 +82,21 @@ console.log('behaviors tests passed');
   clock += 3; b.onTyping(0); clock += 1; b.onTyping(7);
   assert.equal(speech.length, 1, 'pause resets fast streak');
   console.log('fast typing reaction ok'); }
+
+// 0.8.15: every interaction sounds — typing nod carries a soft 'typing' reaction (same 1.5 s cadence, never asleep),
+// a fast streak a 'surprise', landing a thud + 'drop', edge cling a knock + 'surprise', greeting a 'greet', low battery a 'whine'
+{ const snd = [], fx = [];
+  const eng = { hover: false, sleeping: false, state: { action: 'idle' }, m: { actions: { nod: {} } }, play: () => true };
+  const b = new Behaviors({ getWin: () => win, getMonitor: () => mon, getCursor: () => null, engine: eng, say: () => {}, expr: () => {}, play: () => {},
+    line: () => null, t: () => I18N.pick('en'), react: (k, v) => snd.push(k + (v != null ? '@' + v : '')), sfx: (n) => fx.push(n) });
+  clock += 10; b.onTyping(1); b.onTyping(1); assert.deepEqual(snd, ['typing@0.28'], 'one soft typing note per nod');
+  clock += 2; b.onTyping(1); assert.equal(snd.length, 2, 'again after the throttle');
+  eng.sleeping = true; clock += 2; b.onTyping(1); assert.equal(snd.length, 2, 'silent while asleep'); eng.sleeping = false;
+  clock += 2; b.onTyping(7); clock += 1; b.onTyping(7); assert.ok(snd.includes('surprise'), 'fast streak startles');
+  clock += 1000; b.onBattery({ percent: 10, charging: false }); assert.equal(snd.at(-1), 'whine', 'low battery whines');
+  b.onOtherPet('p2', { x: win.x + 10, y: win.y, w: 100, h: 100 }, 'Momo'); assert.equal(snd.at(-1), 'greet', 'greets another pet aloud');
+  // throw and land
+  b.mode = 'fly'; b.v = { x: 10, y: 0 }; const w = { ...win, y: mon.y + mon.h - win.h }; b.h.getWin = () => w;
+  for (let i = 0; i < 200 && b.mode === 'fly'; i++) { const r = b.step(1 / 30); if (r) { w.x = r.x; w.y = r.y; } }
+  assert.equal(b.mode, 'idle'); assert.ok(fx.includes('thud') && snd.includes('drop'), 'landing: thud + oof');
+  console.log('interaction sounds (behaviors) ok'); }

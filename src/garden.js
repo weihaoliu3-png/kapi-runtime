@@ -25,7 +25,7 @@
       g.growthSec += keys >= 6 ? 3 : keys >= 3 ? 2 : 1;
       const before = g.stage; g.stage = this.stageFor(g.growthSec);
       if (g.stage !== before) {
-        if (g.stage === 1) this.h.say('flowerBud'); else if (g.stage === 2) this.h.say('flowerBloom');
+        if (g.stage === 1) { if (this.h.sfx) this.h.sfx('pop', 0.4); this.h.say('flowerBud'); } else if (g.stage === 2) { if (this.h.sfx) this.h.sfx('bloom', 0.4); if (this.h.react) this.h.react('happy'); this.h.say('flowerBloom'); }   // 0.8.15: each stage sounds
         if (g.stage >= 4) this.pick();
       }
       if (g.growthSec % 10 === 0 || g.stage !== before) this.h.save(this.st);
@@ -37,7 +37,7 @@
       const flower = { at: t, style: this.cfg.style, color: this.cfg.color };
       g.flowers.push(flower); g.picked += 1; g.growthSec = 0; g.stage = 0;
       this._pickAnim = { t0: t, dur: 1.2 };
-      this.h.say('flowerPick'); this.h.onPick(flower); this.h.save(this.st);
+      if (this.h.sfx) this.h.sfx('pluck', 0.5); this.h.say('flowerPick'); this.h.onPick(flower); this.h.save(this.st);
     }
     /** Drawing data for the host: head flower (stage 0 = none) and ground flowers; `pickAnim` 0..1 while a flower falls. */
     view() {

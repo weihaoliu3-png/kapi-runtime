@@ -75,7 +75,7 @@
         if (!this.img.look || !this.img.look[target]) target = 'base'; else this.look.sectorIdx = idx;
       } else this.look.sectorIdx = -1;
       const t = this.now();
-      if (target !== this.look.target && t - this.look.lastChange >= (lf.holdMs || 150) / 1000) {
+      if (target !== this.look.target && t - this.look.lastChange >= (lf.holdMs || 80) / 1000) {
         // never jump over a direction: a fast cursor that crossed several sectors is followed one neighbour per hold,
         // along the shorter way round, so every change is an adjacent-frame crossfade (base <-> any direction is direct)
         let next = target;
@@ -293,7 +293,7 @@
       const lf = this.m.lookFollow || {};
       const cands = [];
       if (this.look.fadeFrom && this.look.fadeFrom !== this.look.current && s.action === 'idle')
-        cands.push({ kind: 'look', img: this._lookImg(this.look.fadeFrom), t0: this.look.fadeT0, ms: lf.mode === 'ring' ? (lf.crossfadeMs || 90) : Math.max(220, lf.crossfadeMs || 260) });
+        cands.push({ kind: 'look', img: this._lookImg(this.look.fadeFrom), t0: this.look.fadeT0, ms: lf.mode === 'ring' ? (lf.crossfadeMs || 90) : (lf.crossfadeMs || 55) });   // 0.8.15: the package value is honoured as written (the old 220 ms floor made every frames8 fade a visible double head)
       if (this.transitionFrom && this.transitionFrom !== cur)
         cands.push({ kind: 'trans', img: this.transitionFrom, t0: this.transitionT0, ms: Math.max(a.tweenMs || 0, 120) });
       if (a.type === 'frames') {

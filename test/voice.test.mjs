@@ -41,3 +41,27 @@ console.log('voice tests passed');
   const a = V.planReaction('click', { preset: 'male', seed: 5 }), b = V.planReaction('click', { preset: 'male', seed: 5 }), c = V.planReaction('click', { preset: 'male', seed: 6 });
   assert.deepEqual(a, b, 'same seed -> same reaction'); assert.notDeepEqual(a, c, 'different seed -> varied');
   console.log('reactions ok'); }
+
+// 0.8.14 species voices: every species x kind yields a finite plan; a line becomes 1-4 calls sized by its text; dogs bark (noise + tone), cats purr (AM) when stroked
+{ const V = globalThis.KapiVoice;
+  for (const sp of Object.keys(V.SPECIES)) for (const k of ['click', 'stroke', 'drag', 'drop', 'hit', 'feed', 'drink', 'sleep', 'happy', 'angry', 'talk']) {
+    const pl = V.planAnimal(sp, k, { seed: 2, text: '我在我在！' });
+    assert.ok(pl.notes.length >= 1 && pl.total > 0.03 && pl.total < 3, `${sp}/${k} plan sane (${pl.total})`);
+    for (const n of pl.notes) assert.ok((n.hz == null || (n.hz > 40 && n.hz < 12000)) && n.dur > 0 && n.gain > 0, `${sp}/${k} note sane`);
+  }
+  assert.ok(V.planAnimal('dog', 'click', {}).notes.some(n => n.noise) && V.planAnimal('dog', 'click', {}).notes.some(n => n.hz), 'a bark = noise burst + tone');
+  assert.ok(V.planAnimal('cat', 'stroke', {}).notes[0].am, 'a stroked cat purrs (AM)');
+  const short = V.planAnimal('cat', 'talk', { text: '嗯。' }).notes.length, long = V.planAnimal('cat', 'talk', { text: '今天也要加油哦，别忘了喝水休息一下。' }).notes.length;
+  assert.ok(long > short, 'longer line -> more meows');
+  console.log('species voices ok'); }
+// 0.8.15: every interaction has a sound — new reaction kinds for humans and every species, plus scene sfx
+{ for (const k of KapiVoice.REACTION_KINDS) {
+    const h = KapiVoice.planReaction(k, { preset: 'female' }); assert.ok(h.notes.length >= 1 && h.total < 1.2, 'human ' + k);
+    for (const sp of Object.keys(KapiVoice.SPECIES)) { const a = KapiVoice.planAnimal(sp, k, {}); assert.ok(a.notes.length >= 1 && a.total < 1.6, sp + ' ' + k); }
+  }
+  assert.ok(KapiVoice.REACTION_KINDS.includes('typing') && KapiVoice.REACTION_KINDS.includes('whine') && KapiVoice.REACTION_KINDS.includes('wake'));
+  const ty = KapiVoice.planReaction('typing', { preset: 'female' }); assert.ok(ty.total < 0.2 && ty.notes[0].gain <= 0.5, 'typing note is tiny and soft');
+  assert.ok(KapiVoice.planAnimal('cat', 'typing', {}).total < 0.3, 'cat typing trill is short');
+  for (const n of KapiVoice.SFX) assert.doesNotThrow(() => KapiVoice.sfx(n, 0.5).stop(), n);
+  assert.deepEqual(KapiVoice.SFX, ['thud', 'whoosh', 'splat', 'pop', 'bloom', 'pluck', 'chime', 'fanfare', 'knock']);
+  console.log('interaction sounds ok'); }

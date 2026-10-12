@@ -132,3 +132,16 @@ console.log('engine tests passed');
   clock += 2; e3.update(); assert.equal(e3.state.action, 'idle', 'stagger ends by itself');
   assert.equal(e3.frame().pivot, undefined, 'no pivot once released');
   console.log('drag physics ok'); }
+
+// 0.8.15: frames8 crossfade honours the package value (no 220 ms floor) and defaults to 55 ms / holdMs 80
+{ let c = 5000; const m = JSON.parse(JSON.stringify(manifest)); m.lookFollow = { mode: 'frames8', deadzonePx: 60, holdMs: 80, crossfadeMs: 55 };
+  const ee = new PetEngine({ manifest: m, persona, images }, { now: () => c }); ee.hover = true;
+  c += 1; ee.setLookVector(0, 0); c += 0.5; ee.setLookVector(300, 0);
+  c += 0.03; assert.equal(ee.frame().layers.length, 2, 'still fading at 30 ms');
+  c += 0.05; assert.equal(ee.frame().layers.length, 1, 'fade over by 80 ms (55 ms crossfade, not clamped to 220)');
+  c += 1; ee.setLookVector(300, 0); c += 0.5; ee.setLookVector(-300, 0); c += 0.05; ee.setLookVector(-300, 0); assert.equal(ee.look.current, 'd135', 'held 50 ms after the first step (holdMs 80)');
+  c += 0.05; ee.setLookVector(-300, 0); assert.equal(ee.look.current, 'd180', 'steps one neighbour once holdMs has passed');
+  const m2 = JSON.parse(JSON.stringify(manifest)); m2.lookFollow = { mode: 'frames8', deadzonePx: 60 };
+  const e3 = new PetEngine({ manifest: m2, persona, images }, { now: () => c }); e3.hover = true;
+  c += 1; e3.setLookVector(0, 0); c += 0.5; e3.setLookVector(300, 0); c += 0.07; assert.equal(e3.frame().layers.length, 1, 'missing crossfadeMs -> 55 ms default');
+  console.log('look timing 55/80 ok'); }

@@ -24,3 +24,12 @@ console.log('care tests passed');
 { const pend = []; const h2 = { ...host, pending: (id) => pend.push(id) }; const c3 = new CareSystem({ energy: 10 }, h2);
   c3.do('sleep'); assert.deepEqual(pend, ['sleep'], 'sleep() notifies host.pending'); }
 console.log('care pending hook ok');
+
+// 0.8.15: level up plays a fanfare; waking plays a 'wake' reaction
+{ const fx = [], re = [];
+  const host = { say: () => {}, expr: () => {}, play: () => {}, setSleeping: () => {}, setStageScale: () => {}, toast: () => {}, save: () => {}, line: () => null,
+    t: () => I18N.pick('en'), sfx: (n) => fx.push(n), react: (k) => re.push(k), pending: () => {} };
+  const st = {}; const c = new CareSystem(st, host); c.s.xp = 0; c.s.level = 0;
+  c._gainXp(100000, 'test'); assert.ok(fx.includes('fanfare'), 'level up fanfare');
+  c.s.sleeping = true; c.wake(false); assert.ok(re.includes('wake'), 'wake reaction');
+  console.log('care sounds ok'); }

@@ -78,7 +78,7 @@
       this.host.save(st); return true;
     }
     sleep() { const st = this.s; const T = this.host.t().care; st.sleeping = true; st.sleepSince = Date.now(); this.host.setSleeping(true); if (this.host.react) this.host.react('sleep', 'sleep', 0.6, T.fallback.sleep); else this.host.say(this.host.line('sleep') || T.fallback.sleep); this._gainXp(CARE.sleep.xp, 'sleep'); this.host.save(st); if (this.host.pending) this.host.pending('sleep'); return true; }
-    wake(natural) { const st = this.s; const T = this.host.t().care; if (!st.sleeping) return false; st.sleeping = false; this.host.setSleeping(false); this.host.say(natural ? (this.host.line('wakeUp') || T.fallback.wakeUp) : (this.host.line('wokenUp') || T.fallback.wokenUp)); this.host.save(st); return true; }
+    wake(natural) { const st = this.s; const T = this.host.t().care; if (!st.sleeping) return false; st.sleeping = false; this.host.setSleeping(false); if (this.host.react) this.host.react('wake', null, 0, ''); this.host.say(natural ? (this.host.line('wakeUp') || T.fallback.wakeUp) : (this.host.line('wokenUp') || T.fallback.wokenUp)); this.host.save(st); return true; }
     _gainXp(n, kind) {
       const st = this.s; const day = new Date().toISOString().slice(0, 10);
       if (st.lastCareDay !== day) {
@@ -101,7 +101,7 @@
         }
         if (r.type === 'stage') { st.stage = lv; this.host.setStageScale(STAGE_SCALE[lv] || 1); }
       }
-      this.host.say(msg, true); this.host.play('happy'); this.host.expr('happy', 3000);
+      if (this.host.sfx) this.host.sfx('fanfare', 0.5); this.host.say(msg, true); this.host.play('happy'); this.host.expr('happy', 3000);
     }
     /** Merge a ticket ledger coming from an imported package: tickets marked used there become used here. Live stats stay local. */
     mergeLedger(imported) {
