@@ -43,7 +43,13 @@ jobs:
         run: |
           cd "$DIR"
           APP=$(find src-tauri/target -name "Kapi.app" -path "*release/bundle/macos*" | head -1)
-          mkdir -p out && cp -R "$APP" out/ && cd out && zip -qry "$GITHUB_WORKSPACE/${{ matrix.out }}.zip" Kapi.app
+          mkdir -p out && cp -R "$APP" out/ && cd out
+          chmod 755 Kapi.app/Contents/MacOS/*
+          codesign --force --deep --sign - Kapi.app && codesign --verify --deep --strict Kapi.app
+          lipo -info Kapi.app/Contents/MacOS/* || true
+          zip -qry "$GITHUB_WORKSPACE/${{ matrix.out }}.zip" Kapi.app
+          # the zip must keep Unix attributes: MacOS/* entries 0755 (a re-zip on Windows would lose them and the app would not launch)
+          zipinfo "$GITHUB_WORKSPACE/${{ matrix.out }}.zip" | grep "Contents/MacOS/" | tee /dev/stderr | grep -q "^-rwxr-xr-x" || { echo "executable bit lost in zip"; exit 1; }
       - name: Package (win)
         if: runner.os == 'Windows'
         shell: pwsh
