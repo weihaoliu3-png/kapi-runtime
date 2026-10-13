@@ -145,3 +145,16 @@ console.log('engine tests passed');
   const e3 = new PetEngine({ manifest: m2, persona, images }, { now: () => c }); e3.hover = true;
   c += 1; e3.setLookVector(0, 0); c += 0.5; e3.setLookVector(300, 0); c += 0.07; assert.equal(e3.frame().layers.length, 1, 'missing crossfadeMs -> 55 ms default');
   console.log('look timing 55/80 ok'); }
+
+// 0.8.16: idle life — built-in procedural moves exist on every pet; a scripted glance drives the look while the cursor is far, the cursor wins when near
+{ let c = 9000; const m = JSON.parse(JSON.stringify(manifest)); m.triggers.idleRandomEverySec = [99999, 99999]; const ee = new PetEngine({ manifest: m, persona, images }, { now: () => c });
+  for (const id of globalThis.PET_LIFE_PRESETS) assert.equal(m.actions[id].type, 'procedural', id + ' present');
+  assert.ok(ee.play('stretch', PET_PRIORITY.random)); for (let i = 0; i < 40; i++) { c += 0.05; ee.update(); } assert.equal(ee.state.action, 'idle', 'stretch finishes');
+  assert.ok(ee.lookAlong(['d090', 'base', 'd270', 'base'], 0.6));
+  for (let i = 0; i < 3; i++) { c += 0.1; ee.setLookVector(0, 2000); }   // cursor far below: ignored, the script drives
+  assert.equal(ee.look.current, 'd090', 'first scripted direction');
+  for (let i = 0; i < 40; i++) { c += 0.1; ee.setLookVector(0, 2000); }
+  assert.equal(ee.lookScript, null, 'script ends'); assert.equal(ee.look.current, 'd180', 'then the real cursor (far below) applies again');
+  ee.lookAlong(['d270', 'base'], 1); c += 0.2; ee.setLookVector(120, 0);   // cursor near: script cancelled, real direction
+  assert.equal(ee.lookScript, null, 'cursor wins'); c += 0.3; ee.setLookVector(120, 0); assert.equal(ee.look.current, 'd090');
+  console.log('idle life ok'); }

@@ -100,3 +100,32 @@ console.log('behaviors tests passed');
   for (let i = 0; i < 200 && b.mode === 'fly'; i++) { const r = b.step(1 / 30); if (r) { w.x = r.x; w.y = r.y; } }
   assert.equal(b.mode, 'idle'); assert.ok(fx.includes('thud') && snd.includes('drop'), 'landing: thud + oof');
   console.log('interaction sounds (behaviors) ok'); }
+
+// 0.8.16 idle life: fires every 15-45 s (scaled by mood), never twice the same act in a row, never while busy / hovering / asleep
+{ const played = [], scripts = [];
+  const eng = { hover: false, sleeping: false, state: { action: 'idle' }, m: { actions: { nod: {}, wave: { type: 'frames' } } }, drag: { active: false }, lookScript: null,
+    play: (id) => { played.push(id); return true; }, lookAlong: (d) => { scripts.push(d); return true; } };
+  let busy = false;
+  const lw = { ...win };
+  const b = new Behaviors({ getWin: () => lw, getMonitor: () => mon, getCursor: () => ({ x: 2000, y: 100 }), engine: eng, say: () => {}, expr: () => {}, play: () => {}, line: () => null,
+    t: () => I18N.pick('en'), mood: () => 100, busy: () => busy });
+  const acts = []; const orig = b.lifeAct.bind(b); b.lifeAct = () => { const p = orig(); acts.push(p); return p; };
+  const tick = () => { clock += 1; const r = b.step(1); if (r) { lw.x = r.x; lw.y = r.y; } };
+  for (let i = 0; i < 60 * 40; i++) tick();              // 40 minutes
+  assert.ok(acts.length >= 40 && acts.length <= 200, 'about one act every 15-36 s at mood 100: ' + acts.length);
+  for (let i = 1; i < acts.length; i++) assert.notEqual(acts[i], acts[i - 1], 'no immediate repeat');
+  assert.ok(new Set(acts).size >= 6, 'variety: ' + [...new Set(acts)].join(','));
+  busy = true; const n = acts.length; for (let i = 0; i < 600; i++) tick(); assert.equal(acts.length, n, 'quiet while a bubble / panel is open');
+  busy = false; eng.sleeping = true; for (let i = 0; i < 600; i++) tick(); assert.equal(acts.length, n, 'quiet while asleep');
+  console.log('idle life (behaviors) ok'); }
+
+// 0.8.16 desktop awareness: a click far away -> sometimes a glance; a burst of clicks -> a startle (once per 12 s); nothing while asleep
+{ const scripts = [], played = [], ex = [];
+  const eng = { hover: false, sleeping: false, state: { action: 'idle' }, m: { actions: {} }, drag: { active: false }, lookScript: null, play: (id) => { played.push(id); return true; }, lookAlong: (d) => { scripts.push(d); return true; } };
+  const b = new Behaviors({ getWin: () => win, getMonitor: () => mon, getCursor: () => null, engine: eng, say: () => {}, expr: (n) => ex.push(n), play: () => {}, line: () => null, t: () => I18N.pick('en') });
+  clock += 100; assert.equal(b.onDesktopClick('left', win.x + 60, win.y + 300), 'glance', 'a click right next to it: always a look');
+  assert.ok(scripts.at(-1)[0].startsWith('d'), 'toward the click');
+  clock += 100; let r = b.onDesktopClick('left', win.x + 1500, win.y); clock += 0.2; r = b.onDesktopClick('left', win.x + 1500, win.y) || r; clock += 0.2; r = b.onDesktopClick('left', win.x + 1500, win.y) || r;
+  assert.ok(played.includes('shiver') && ex.includes('surprised'), 'triple click = startled');
+  clock += 100; eng.sleeping = true; assert.equal(b.onDesktopClick('left', win.x + 60, win.y + 300), null, 'asleep: nothing');
+  console.log('desktop clicks ok'); }

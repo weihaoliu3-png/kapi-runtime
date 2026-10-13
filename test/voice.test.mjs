@@ -65,3 +65,19 @@ console.log('voice tests passed');
   for (const n of KapiVoice.SFX) assert.doesNotThrow(() => KapiVoice.sfx(n, 0.5).stop(), n);
   assert.deepEqual(KapiVoice.SFX, ['thud', 'whoosh', 'splat', 'pop', 'bloom', 'pluck', 'chime', 'fanfare', 'knock']);
   console.log('interaction sounds ok'); }
+// 0.8.16: real recordings — every species x kind either maps to a recorded pool or falls through to the synth; never both silent
+{ const idx = JSON.parse(readFileSync(new URL('../src/sounds/index.json', import.meta.url), 'utf8'));
+  for (const f of readFileSync(new URL('../src/sounds/CREDITS.md', import.meta.url), 'utf8').split('\n')) if (f.startsWith('| `')) assert.ok(/CC0|Public domain|CC BY/.test(f), 'licence listed: ' + f);
+  // inject the index without fetch
+  const { existsSync } = await import('node:fs');
+  for (const sp of ['cat', 'dog', 'dog-small', 'dog-large', 'bird', 'rodent', 'rabbit', 'kitten']) for (const k of KapiVoice.REACTION_KINDS.concat(['talk'])) {
+    const pool = (KapiVoice.POOL[/dog/.test(sp) ? 'dog' : sp === 'kitten' ? 'cat' : sp] || {})[k];
+    if (!pool) continue;
+    const real = idx[sp] && idx[sp]._alias ? idx[idx[sp]._alias] : idx[sp];
+    const files = (real && real[pool]) || (idx[sp] && idx[sp]._fallback && idx[idx[sp]._fallback][pool]) || [];
+    for (const f of files) { const dir = idx[sp] && idx[sp]._alias ? idx[sp]._alias : (real && real[pool] ? sp : idx[sp]._fallback); assert.ok(existsSync(new URL(`../src/sounds/${dir}/${f}`, import.meta.url)), `${sp}/${k} -> ${dir}/${f} exists`); }
+  }
+  assert.ok(idx.cat.talk.length >= 10 && idx.cat.stroke.length >= 1 && idx['dog-small'].talk.length >= 4 && idx.bird.talk.length >= 2, 'bank populated');
+  assert.equal(idx.kitten._alias, 'cat'); assert.ok(idx.kitten.rate > 1, 'kitten plays the cat bank higher');
+  assert.equal(KapiVoice.playAnimal('cat', 'talk', { text: '喵' }), null, 'without a loaded index (no fetch here) it falls back to the synth');
+  console.log('recording bank ok'); }
