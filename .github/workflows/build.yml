@@ -57,8 +57,9 @@ jobs:
           Set-Location $env:DIR
           $exe = Get-ChildItem -Recurse src-tauri/target -Filter Kapi.exe | Where-Object { $_.FullName -match 'release\\Kapi.exe$' } | Select-Object -First 1
           New-Item -ItemType Directory -Force out | Out-Null
-          Copy-Item $exe.FullName out/
+          Copy-Item $exe.FullName out/Kapi.exe          # the binary is built as kapi.exe; the delivery contract wants Kapi.exe at the zip root
           Compress-Archive -Path out/* -DestinationPath "$env:GITHUB_WORKSPACE/${{ matrix.out }}.zip" -Force
+          $names = (Get-ChildItem out).Name; if ($names -cnotcontains 'Kapi.exe') { Write-Error "Kapi.exe missing from the zip root: $names"; exit 1 }
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.out }}
