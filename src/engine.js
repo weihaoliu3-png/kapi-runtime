@@ -235,6 +235,16 @@
     chatReply() { this.trigger('chatReply'); }
     stopChat() { if (this.state.prio === PRIORITY.chat) this._toIdle(); }
 
+    /** 0.9.2 walk cycle: while the behaviours move the window, a real `walk` frames action (cycle: true, loops -1)
+     *  plays and keeps looping; when the walk ends it returns to idle. Without walk frames nothing happens (the old bob). */
+    hasWalkCycle() { const a = this.m.actions.walk; return !!(a && a.type === 'frames' && a.cycle); }
+    setWalking(on) {
+      this.walking = !!on;
+      if (!this.hasWalkCycle() || this.sleeping || this.drag.active) return;
+      if (on && this.state.action !== 'walk' && (this.state.action === 'idle' || this._finished())) this.play('walk', PRIORITY.random + 1);
+      if (!on && this.state.action === 'walk') this._toIdle();
+    }
+
     // ---------- tick ----------
     update() {
       const t = this.now(); const s = this.state; const a = this.m.actions[s.action];
@@ -247,7 +257,7 @@
           if (s.seqIdx >= seq.length) {
             if (s.waking) { this._toIdle(); }
             else if (a.holdLast) { s.seqIdx = seq.length - 1; }
-            else { s.loopsDone += 1; if (a.loops < 0 || s.loopsDone < (a.loops || 1)) s.seqIdx = 0; else this._toIdle(); }
+            else { s.loopsDone += 1; if ((a.cycle && this.walking) || a.loops < 0 || s.loopsDone < (a.loops || 1)) s.seqIdx = 0; else this._toIdle(); }
           }
         }
       } else if (a && a.type === 'procedural' && s.action !== 'idle' && s.action !== 'drag') {

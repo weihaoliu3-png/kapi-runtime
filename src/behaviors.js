@@ -6,7 +6,7 @@
   const GRAVITY = 2600;        // px/s^2
   const BOUNCE = 0.38;         // velocity kept after bounce
   const FRICTION = 0.85;       // horizontal damping per bounce
-  const WALK_SPEED = 130;      // px/s
+  const WALK_SPEED = 130;      // px/s (a real walk cycle plays at this speed too; see engine.setWalking)
   const PEEK_VISIBLE = 0.28;   // fraction of the pet left visible when hiding at an edge
 
   class Behaviors {
@@ -48,9 +48,11 @@
     lifeAct() {
       const e = this.h.engine; const m = (e.m && e.m.actions) || {};
       const dirs = global.PET_DIRS || ['d000', 'd045', 'd090', 'd135', 'd180', 'd225', 'd270', 'd315'];
-      const learned = Object.keys(m).filter(id => m[id].type === 'frames' && !['eat', 'drink', 'sleep', 'typing'].includes(id));
+      const learned = Object.keys(m).filter(id => m[id].type === 'frames' && !['eat', 'drink', 'sleep', 'typing', 'walk', 'groom'].includes(id));
+      const groom = m.groom && m.groom.type === 'frames';
       const menu = [
         ['lookAround', 24], ['glance', 12], ['stretch', 12], ['tilt', 12], ['wander', 12], ['yawn', 7], ['shiver', 5], ['hop', 5], ['settle', 6], ['learned', learned.length ? 8 : 0],
+        ['groom', groom ? 18 : 0],                                        // 0.9.2: a real grooming clip (舔毛 / 理头发) is the most "alive" thing it has
       ].filter(([id]) => id !== this.lastLife);
       const total = menu.reduce((q, x) => q + x[1], 0); let r = Math.random() * total; let pick = menu[0][0];
       for (const [id, w] of menu) { r -= w; if (r <= 0) { pick = id; break; } }
@@ -72,6 +74,7 @@
         case 'hop': e.play('jump', global.PET_PRIORITY.random); if (this.h.react && Math.random() < 0.3) this.h.react('happy', 0.3); break;
         case 'settle': e.play('settle', global.PET_PRIORITY.random); break;
         case 'learned': e.play(learned[Math.floor(Math.random() * learned.length)], global.PET_PRIORITY.random); break;
+        case 'groom': e.play('groom', global.PET_PRIORITY.random); if (this.h.react && Math.random() < 0.3) this.h.react('stroke', 0.3); break;
       }
       return pick;
     }
@@ -94,7 +97,12 @@
     // ---------- walk ----------
     walkTo(x, y) { const w = this.h.getWin(); this.target = { x, y: y ?? w.y }; this.flip = x < w.x; this.mode = 'walk'; }
     comeHere() { const c = this.h.getCursor(), w = this.h.getWin(); if (!c || !w) return; this.walkTo(c.x - w.w / 2, w.y); this.h.say(this.h.line('comeHere') || this.h.t().beh.coming); }
-    wander() { const w = this.h.getWin(), m = this.h.getMonitor(); if (!w || !m) return; const dx = (Math.random() < 0.5 ? -1 : 1) * (80 + Math.random() * 160); this.walkTo(Math.min(Math.max(w.x + dx, m.x), m.x + m.w - w.w), w.y); }
+    wander() {
+      const w = this.h.getWin(), m = this.h.getMonitor(); if (!w || !m) return;
+      const real = this.h.engine.hasWalkCycle && this.h.engine.hasWalkCycle();
+      const dx = (Math.random() < 0.5 ? -1 : 1) * (real ? 150 + Math.random() * 350 : 80 + Math.random() * 160);   // a real walker goes farther
+      this.walkTo(Math.min(Math.max(w.x + dx, m.x), m.x + m.w - w.w), w.y);
+    }
 
     // ---------- follow the cursor ----------
     setFollow(on) { this.follow = !!on; if (on) { this.mode = 'idle'; this.target = null; this.h.say(this.h.line('follow') || this.h.t().beh.follow); } else if (this.mode === 'walk' && this._followTarget) { this.mode = 'idle'; this.target = null; } this._followTarget = false; }
@@ -106,7 +114,7 @@
       if (dist < 24) { this._followTarget = false; return null; }
       const speed = Math.min(420, 90 + dist * 1.2) * dt;                 // faster when far, gentle when close
       this.flip = dx < 0; this._followTarget = true;
-      const bob = Math.sin(performance.now() / 90) * 3;
+      const bob = (this.h.engine.hasWalkCycle && this.h.engine.hasWalkCycle()) ? 0 : Math.sin(performance.now() / 90) * 3;
       return { x: w.x + dx / dist * Math.min(speed, dist), y: w.y + dy / dist * Math.min(speed, dist) + bob, rot: 0, flip: this.flip, walking: true };
     }
 
@@ -190,7 +198,7 @@
         const dx = this.target.x - w.x, dy = this.target.y - w.y; const dist = Math.hypot(dx, dy);
         const sp = (this.mode === 'peek' ? 260 : WALK_SPEED) * dt;
         if (dist <= sp) { const t = this.target; this.target = null; const done = this.mode; if (this.mode === 'walk') this.mode = 'idle'; this._perchMove = false; return { x: t.x, y: t.y, rot: 0, flip: this.flip, arrived: done }; }
-        const bob = Math.sin(performance.now() / 90) * 3;
+        const bob = (this.h.engine.hasWalkCycle && this.h.engine.hasWalkCycle()) ? 0 : Math.sin(performance.now() / 90) * 3;   // real frames carry their own motion
         return { x: w.x + dx / dist * sp, y: w.y + dy / dist * sp + (this.mode === 'walk' ? bob : 0), rot: 0, flip: this.flip, walking: true };
       }
       if (this.mode === 'idle' && performance.now() / 1000 > this.lifeAt) {
@@ -199,7 +207,8 @@
         if (!e.hover && e.state.action === 'idle' && !e.sleeping && !e.drag.active && !(this.h.busy && this.h.busy()) && !e.lookScript) this.lifeAct();
       }
       if (this.mode === 'idle' && performance.now() / 1000 > this.wanderAt) {
-        this.wanderAt = performance.now() / 1000 + 180 + Math.random() * 240;
+        const real = this.h.engine.hasWalkCycle && this.h.engine.hasWalkCycle();
+        this.wanderAt = performance.now() / 1000 + (real ? 60 + Math.random() * 90 : 180 + Math.random() * 240);   // a pet that can really walk strolls every 1-2.5 min
         if (!this.h.engine.hover && this.h.engine.state.action === 'idle' && !this.h.engine.sleeping && Math.random() < 0.5) this.wander();
       }
       // edge cling: pet mostly off-screen after a drag

@@ -19,6 +19,7 @@
               rewards: { 2: '新台词包：撒娇', 3: '服装券 ×1', 4: '新台词包：碎碎念', 5: '服装券 ×1', 6: '成长阶段：少年期（体型 +10%）', 7: '服装券 ×1', 8: '新台词包：老朋友', 9: '节日皮肤券 ×1', 10: '成长阶段：成年期（体型 +20%）' } },
       beh: { follow: '走哪跟哪。',  hide: '我躲一会儿。', coming: '来了来了。', perch: '这里视野不错。', perchHint: '点一下你想让我坐的窗口。', typingLong: '打这么多字，歇会儿？', lowBattery: '电量只剩 {p}% 了！', greet: '嗨，{name}。', thrown: '……你扔我？', cling: '扒住了扒住了！', climbBack: '差点掉下去。', dizzy: '头、头好晕……', gift: '给我的？……这个不能吃。', giftHover: '那是什么？' },
       wardrobe: { menu: '衣柜', default: '原装' },
+      src: { olderBundle: (b, have) => `这个文件夹里的它是 v${b}，电脑上已经有更新的 v${have}，显示的是 v${have}。想换成这个文件夹的版本，先在右键「导出」里看一下，或者重新用更高版本的包。` },
       perm: { hint: '想让它跟着你打字点头、长花、用 Ctrl 鞭子？托盘 → 「启用打字互动」，给一次辅助功能权限就行；不开也不影响其他玩法。', howTo: '在「系统设置 → 隐私与安全性 → 辅助功能」里打开 Kapi 的开关，回来就生效，不用重启。', on: '打字互动已开启。' },
       growth: {
         menu: '它的小本子', play: '玩一会儿（抓光点）',
@@ -68,6 +69,7 @@
               rewards: { 2: 'New lines: clingy', 3: 'Outfit ticket ×1', 4: 'New lines: rambling', 5: 'Outfit ticket ×1', 6: 'Growth: teen (size +10%)', 7: 'Outfit ticket ×1', 8: 'New lines: old friend', 9: 'Holiday skin ticket ×1', 10: 'Growth: adult (size +20%)' } },
       beh: { follow: 'Right behind you.', hide: "I'll hide for a bit.", coming: 'Coming.', perch: 'Nice view up here.', perchHint: 'Click the window you want me to sit on.', typingLong: "That's a lot of typing. Break?", lowBattery: 'Battery is at {p}%!', greet: 'Hey, {name}.', thrown: '…did you just throw me?', cling: 'Hanging on!', climbBack: 'Almost fell.', dizzy: 'I… the room is spinning…', gift: "For me? …I can't eat that.", giftHover: "What's that?" },
       wardrobe: { menu: 'Wardrobe', default: 'Original' },
+      src: { olderBundle: (b, have) => `This folder's copy is v${b}; a newer v${have} is already installed, so v${have} is shown.` },
       perm: { hint: 'Want it to nod along as you type, grow the flower and dodge the Ctrl whip? Tray → "Enable typing reactions" and grant Accessibility once; everything else works without it.', howTo: 'Turn on Kapi under System Settings → Privacy & Security → Accessibility; it takes effect when you come back, no restart.', on: 'Typing reactions are on.' },
       growth: {
         menu: 'Its notebook', play: 'Play a round (catch the light)',

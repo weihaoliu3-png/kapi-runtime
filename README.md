@@ -20,6 +20,16 @@ npm run build         # 产出 src-tauri/target/release/bundle/…
 
 不签名（已定案）：Mac 首次打开要在"系统设置 → 隐私与安全性"里点"仍要打开"；Windows 会弹 SmartScreen。skill 的交付话术里已写清楚。
 
+## v0.9.2 修复 + 新增：小本子白屏、真走路、打理、去掉坐窗口、来源诊断
+
+- **小本子白屏 + 桌宠失去鼠标（Windows，P0）**：`open_panel_window` 以前在 Tauri 命令线程里创建窗口——WebView2 窗口在没有消息循环的工作线程上建出来，就会永远停在加载页、收到关闭也不关，主窗口的光标调用排在它后面一起卡住；旧版"叫另一只出来后点不动"是同一机制。现在所有辅助窗口只在**主线程**创建（`run_on_main_thread`），结果以 `aux-window` 事件回报（失败 toast + 写日志）；`openNotebook` 之后 1.5 秒无条件把桌宠窗口恢复为可点击。
+- **真走路**（`engine.setWalking` / `actions.walk.cycle`）：宠物包里有 `walk`（`cycle: true, loops: -1`，由 skill 的 `video_to_action.py --mode cycle` 产出）时，它溜达 / 过来 / 跟鼠标 / 躲起来的路上播放真实步行循环（向左走镜像），到达即回待机；没有就还是旧的颠簸。有真走路的宠物每 1–2.5 分钟溜达一次、走得更远（150–500 px）。
+- **打理**（`actions.groom`）：舔毛 / 挠耳 / 理头发是待机调度里权重最高的一项（18），偶尔配一声"舒服"的反应。
+- **「坐到窗口上」默认移除**：只有 `pet.json.features.perchOnWindow = true` 的包才显示那一项；代码保留。
+- **来源诊断**：托盘「诊断」第一段就是"名字 id v版本/b构建 ← 目录"；启动把候选宠物（id@版本:目录）全部写进 `kapi-debug.log`；交付包里的宠物版本低于电脑上已装的 → 启动 toast 说明显示的是哪个（打包侧也已改为自动读本机已装版本，不会再出这种包）。
+- CI：Windows 产物统一命名 `Kapi.exe`（二进制本名是 kapi.exe）并校验。
+- 测试：`engine.test.mjs`（走路循环只在有 cycle 帧时播，到达即停）。
+
 ## v0.9.1 修复：Mac 启动被"辅助功能"弹窗卡死、Mac 包丢可执行位
 
 - **启动不再申请辅助功能权限**（`lib.rs`）：`device_query::DeviceState::new()` 在 macOS 上会弹系统权限窗，没权限还会 panic——以前一启动就跑全局输入监听，所以每次打开都被卡在弹窗。现在：启动时用**不弹窗**的 `AXIsProcessTrusted` 检查，有权限才起监听线程（只起一次，`AtomicBool` 防重复）；没权限就正常进桌面，打字点头 / 长花 / Ctrl 鞭子暂停，其余一切照常；后台每 5 秒查一次，用户在系统设置里打开开关后**不用重启**自动接上。托盘多一项「启用打字互动（需要辅助功能权限）」（仅 Mac）：点了才弹一次系统提示 + 打开「隐私与安全性 → 辅助功能」页；拒绝了也只是没有打字互动。首次启动 6 秒后一条不阻塞的 toast 说明这件事（只说一次）。Windows 不受影响（那里不需要权限）。新增命令 `request_input_permission` / `input_watcher_state`，事件 `input-watcher`。

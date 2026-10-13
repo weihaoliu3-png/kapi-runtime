@@ -158,3 +158,16 @@ console.log('engine tests passed');
   ee.lookAlong(['d270', 'base'], 1); c += 0.2; ee.setLookVector(120, 0);   // cursor near: script cancelled, real direction
   assert.equal(ee.lookScript, null, 'cursor wins'); c += 0.3; ee.setLookVector(120, 0); assert.equal(ee.look.current, 'd090');
   console.log('idle life ok'); }
+
+// 0.9.2: a real walk cycle (actions.walk frames, cycle: true) loops while walking and stops at arrival; without one nothing plays
+{ let c = 20000; const m = JSON.parse(JSON.stringify(manifest)); m.triggers.idleRandomEverySec = [99999, 99999];
+  m.actions.walk = { type: 'frames', dir: 'actions/walk', frames: 6, fps: 12, sequence: [0, 1, 2, 3, 4, 5], loops: -1, cycle: true };
+  const im = { ...images, actions: { ...images.actions, walk: Array.from({ length: 6 }, (_, i) => img('walk' + i)) } };
+  const ee = new PetEngine({ manifest: m, persona, images: im }, { now: () => c });
+  assert.ok(ee.hasWalkCycle());
+  ee.setWalking(true); assert.equal(ee.state.action, 'walk', 'walk frames play while walking');
+  for (let i = 0; i < 40; i++) { c += 0.1; ee.update(); } assert.equal(ee.state.action, 'walk', 'keeps looping (4 s > one 0.5 s cycle)');
+  ee.setWalking(false); assert.equal(ee.state.action, 'idle', 'stops at arrival');
+  const m2 = JSON.parse(JSON.stringify(manifest)); const e2 = new PetEngine({ manifest: m2, persona, images }, { now: () => c });
+  assert.ok(!e2.hasWalkCycle()); e2.setWalking(true); assert.equal(e2.state.action, 'idle', 'no walk frames: nothing plays');
+  console.log('walk cycle ok'); }

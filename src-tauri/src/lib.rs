@@ -173,10 +173,21 @@ fn peer_pets(id: String, name: String, rect: serde_json::Value) -> Vec<Peer> {
 #[tauri::command]
 fn open_panel_window(app: AppHandle, pet_dir: String, lang: String) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("notebook") { let _ = w.show(); let _ = w.set_focus(); return Ok(()); }
+    // 0.9.2 (Windows 白屏 + 桌宠失去鼠标): a command runs on a worker thread, and a WebView2 window created there has no
+    // message pump of its own — it sits on the loading page forever, never closes, and the main window's cursor
+    // calls queue up behind it. The same mechanism was behind the old "叫另一只出来" freeze. Windows are therefore
+    // created on the main thread only, and the result is reported back to the page as an event.
     let q = format!("panel.html?dir={}&lang={}", urlencode(&pet_dir), urlencode(&lang));
-    tauri::WebviewWindowBuilder::new(&app, "notebook", tauri::WebviewUrl::App(q.into()))
-        .title("Kapi").inner_size(560.0, 640.0).min_inner_size(420.0, 480.0).resizable(true).decorations(true).always_on_top(false)
-        .build().map_err(|e| e.to_string())?;
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let r = tauri::WebviewWindowBuilder::new(&handle, "notebook", tauri::WebviewUrl::App(q.into()))
+            .title("Kapi").inner_size(560.0, 640.0).min_inner_size(420.0, 480.0).resizable(true).decorations(true).always_on_top(false)
+            .build();
+        match r {
+            Ok(w) => { let _ = w.set_focus(); let _ = handle.emit("aux-window", serde_json::json!({ "label": "notebook", "ok": true })); }
+            Err(e) => { let _ = handle.emit("aux-window", serde_json::json!({ "label": "notebook", "ok": false, "error": e.to_string() })); }
+        }
+    }).map_err(|e| e.to_string())?;
     Ok(())
 }
 fn urlencode(s: &str) -> String {

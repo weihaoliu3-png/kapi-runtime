@@ -515,13 +515,21 @@
     pollDiag.fails[stage] = (pollDiag.fails[stage] || 0) + 1; pollDiag.lastErr = stage + ': ' + (e && e.message ? e.message : String(e));
     if (!pollDiag.toasted && pollDiag.fails[stage] >= 30) { pollDiag.toasted = true; toast('鼠标跟随出错（' + stage + '）：' + pollDiag.lastErr.slice(0, 120), 6000); saveDebugLog(); }
   }
+  async function appendLog(line) {
+    try {
+      const path = settingsFile.replace(/settings[^/\\]*\.json$/, 'kapi-debug.log');
+      let prev = ''; try { prev = await invoke('read_text', { path }); } catch (_) {}
+      const lines = (prev ? prev.split('\n') : []).filter(Boolean).slice(-120); lines.push(new Date().toISOString() + ' ' + line);
+      await invoke('write_text', { path, content: lines.join('\n') + '\n' });
+    } catch (_) {}
+  }
   async function saveDebugLog() {
     try {
       let local = null, alpha = null;
       try { if (cursorLogical && winRect) { local = { x: cursorLogical.x - winRect.x, y: cursorLogical.y - winRect.y }; alpha = petAlphaAt(local.x, local.y); } } catch (_) {}
       const line = JSON.stringify({ at: new Date().toISOString(), label: win.label, pet: pet && pet.id, engine: !!engine, hidden, dragging, cursor: cursorLogical, local, alpha, win: winRect,
                                     ignoreCursorEvents: lastHitVisible === null ? null : !lastHitVisible, diag: pollDiag, peers: Object.keys(peers) });
-      const path = settingsFile.replace(/settings\.json$/, 'kapi-debug.log');
+      const path = settingsFile.replace(/settings[^/\\]*\.json$/, 'kapi-debug.log');   // settings-<hash>.json since 0.8.16
       let prev = ''; try { prev = await invoke('read_text', { path }); } catch (_) {}
       const lines = (prev ? prev.split('\n') : []).filter(Boolean).slice(-80); lines.push(line);
       await invoke('write_text', { path, content: lines.join('\n') + '\n' });
@@ -607,11 +615,12 @@
   setInterval(async () => {
     if (!beh || !winRect || dragging) { lastStep = performance.now(); return; }
     const now = performance.now(); const dt = Math.min(0.1, (now - lastStep) / 1000); lastStep = now;
-    const r = beh.step(dt); if (!r) { engine.extraRot = 0; return; }
+    const r = beh.step(dt); if (!r) { engine.extraRot = 0; if (engine.walking) engine.setWalking(false); return; }
     engine.flip = !!r.flip; engine.extraRot = r.rot || 0;
+    engine.setWalking(!!r.walking && (beh.mode === 'walk' || beh.follow));                 // 0.9.2: real walk cycle while strolling (not while flying / peeking)
     winRect.x = r.x; winRect.y = r.y;
     try { await win.setPosition(new LogicalPosition(Math.round(r.x), Math.round(r.y))); } catch (_) {}
-    if (r.arrived === 'walk' || r.landed) engine.flip = false;
+    if (r.arrived === 'walk' || r.landed) { engine.flip = false; engine.setWalking(false); }
   }, 33);
   setInterval(refreshRects, 2000);
 
@@ -772,7 +781,10 @@
     if (!pet) return;
     try { await invoke('open_panel_window', { petDir: pet.dir, lang: pet.persona.language || 'zh-CN' }); } catch (e) { toast(String(e), 4000); }
     if (growth) growth.record('panel');
+    // belt and braces (0.9.2): whatever the auxiliary window does, the pet must stay clickable
+    setTimeout(async () => { lastHitVisible = null; lastIgnoreAt = 0; try { await win.setIgnoreCursorEvents(false); } catch (_) {} }, 1500);
   }
+  listen('aux-window', (e) => { const p = e.payload || {}; if (!p.ok) toast(`${p.label}: ${p.error || 'failed'}`, 6000); appendLog(`aux-window ${p.label} ok=${p.ok} ${p.error || ''}`); });
   /** It brings the find to you: the emoji floats up from its paws and stays 6 s, with its line. */
   function showFind(f) {
     const G = T.growth; findShow = { emoji: f.emoji, t0: performance.now(), page: !!f.page };
@@ -895,7 +907,7 @@
       await CheckMenuItem.new({ text: beh && beh.follow ? T.menu2.unfollow : T.menu2.follow, checked: !!(beh && beh.follow), action: () => beh && beh.setFollow(!beh.follow) }),
       await MenuItem.new({ text: T.menu2.come, action: () => beh && beh.comeHere() }),
       await MenuItem.new({ text: T.menu2.hide, action: () => beh && beh.peek() }),
-      await CheckMenuItem.new({ text: T.menu2.perch, checked: !!(beh && beh.mode === 'perch'), action: () => beh && beh.setPerch(beh.mode !== 'perch') }),
+      ...(pet.manifest.features && pet.manifest.features.perchOnWindow ? [await CheckMenuItem.new({ text: T.menu2.perch, checked: !!(beh && beh.mode === 'perch'), action: () => beh && beh.setPerch(beh.mode !== 'perch') })] : []),   // 0.9.2: off unless the pack opts in
       ...(await wardrobeItems()),
       await PredefinedMenuItem.new({ item: 'Separator' }),
       await MenuItem.new({ text: T.menu.import, action: importPet }),
@@ -968,7 +980,7 @@
   listen('tray', async (e) => {
     const id = e.payload;
     if (id === 'toggle') toggleHidden(); else if (id === 'notebook') openNotebook(); else if (id === 'typing') enableTyping(); else if (id === 'import') importPet(); else if (id === 'switch') switchPet(); else if (id === 'export') exportPet();
-    else if (id === 'diagnose') { const path = await saveDebugLog(); toast(`${win.label} ${pet ? pet.id : ''} · poll ok ${pollDiag.ok} · 失败 ${JSON.stringify(pollDiag.fails)} · ${pollDiag.lastErr || '无错误'} · 穿透=${lastHitVisible === null ? '?' : !lastHitVisible} · 日志 ${path}`, 9000); }
+    else if (id === 'diagnose') { const path = await saveDebugLog(); toast(`${pet ? `${pet.name} ${pet.id} v${pet.manifest.version}${pet.manifest.build ? '/b' + pet.manifest.build : ''} ← ${pet.dir}` : '无宠物'} · poll ok ${pollDiag.ok} · 失败 ${JSON.stringify(pollDiag.fails)} · ${pollDiag.lastErr || '无错误'} · 穿透=${lastHitVisible === null ? '?' : !lastHitVisible} · 日志 ${path}`, 9000); }
     else if (id === 'recover') { lastHitVisible = true; lastIgnoreAt = 0; try { await win.setIgnoreCursorEvents(false); } catch (_) {} hidden = false; try { await win.show(); } catch (_) {} }
   });
   listen('panel-cmd', (e) => { const c = (e.payload || {}).cmd; if (c === 'game') startCatchGame(); else if (c === 'care') openCare(); });
@@ -1050,10 +1062,14 @@
         settings.seenBundles = [...(settings.seenBundles || []), b.bundleId].slice(-20);
         if (bundlePick) settings.activePetId = bundlePick.id;
         await saveSettings();
+        // 0.9.2: the folder's own copy may be OLDER than one already installed (list_pets keeps the highest version per
+        // id) — say so, instead of letting the user think the "new" folder did nothing
+        if (bundlePick && b.version && Number(b.version) < Number(bundlePick.version)) toast(T.src.olderBundle(b.version, bundlePick.version), 9000);
       }
     } catch (_) {}
     const chosen = bundlePick || pets.find(p => p.id === settings.activePetId) || pets[0];
     try { await loadPet(chosen); } catch (e) { toast(String(e), 6000); }
+    try { await appendLog(`start ${chosen.id} v${chosen.version} from ${chosen.dir}; candidates: ${pets.map(p => `${p.id}@v${p.version}:${p.dir}`).join(' | ')}`); } catch (_) {}
     if (!engine) { try { await win.setIgnoreCursorEvents(true); } catch (_) {} }   // a window with no pet must never block clicks
   }
   render();
