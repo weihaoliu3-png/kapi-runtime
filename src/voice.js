@@ -336,6 +336,62 @@
   const SFX = ['thud', 'whoosh', 'splat', 'pop', 'bloom', 'pluck', 'chime', 'fanfare', 'knock'];
   const REACTION_KINDS = ['click', 'stroke', 'drag', 'drop', 'hit', 'feed', 'drink', 'sleep', 'happy', 'angry', 'typing', 'whine', 'surprise', 'greet', 'wake'];
 
+  // ---------------------------------------------------------------- real recordings (0.8.16)
+  // src/sounds/<species>/<kind>-NN.mp3 (CC0 / public domain / CC BY, see src/sounds/CREDITS.md) are what a real animal
+  // plays; the synthesised planAnimal above is only the fallback for a kind that has no recording (nom nom, lap lap,
+  // a dog's whine) or when the files cannot load. index.json: { cat: { talk: [...], stroke: [...] }, kitten: { _alias: 'cat', rate } }
+  let bankIndex = null, bankLoading = null; const bankCache = {};
+  function loadBank(base) {
+    if (bankIndex) return Promise.resolve(bankIndex);
+    if (!bankLoading) bankLoading = fetch((base || '') + 'sounds/index.json').then(r => r.json()).then(j => (bankIndex = j)).catch(() => (bankIndex = {}));
+    return bankLoading;
+  }
+  /** Which recording pool a reaction kind draws from, per species; null = use the synth. */
+  const POOL = {
+    cat:    { talk: 'talk', click: 'talk', greet: 'talk', typing: 'talk', drop: 'talk', surprise: 'talk', wake: 'talk', drag: 'talk', happy: 'talk', whine: 'whine', stroke: 'stroke', angry: 'hiss', hit: 'angry' },
+    dog:    { talk: 'talk', click: 'talk', greet: 'talk', typing: 'talk', drop: 'talk', surprise: 'talk', wake: 'talk', drag: 'talk', happy: 'talk', hit: 'talk', angry: 'talk', whine: 'howl' },
+    bird:   { talk: 'talk', click: 'talk', greet: 'talk', typing: 'talk', drop: 'talk', surprise: 'talk', wake: 'talk', drag: 'talk', happy: 'talk', hit: 'talk', angry: 'talk', whine: 'talk', stroke: 'talk' },
+    rodent: { talk: 'talk', click: 'talk', greet: 'talk', typing: 'talk', drop: 'talk', surprise: 'talk', wake: 'talk', drag: 'talk', happy: 'talk', hit: 'talk', angry: 'talk', whine: 'whine' },
+    rabbit: { angry: 'thump', hit: 'thump', drop: 'thump', surprise: 'thump', drag: 'thump' },
+  };
+  function poolFor(species) { return POOL[/dog/.test(species) ? 'dog' : species === 'kitten' ? 'cat' : species] || POOL.cat; }
+  function resolveSpecies(idx, species) {
+    let sp = species, rate = 1, hops = 0;
+    while (idx[sp] && idx[sp]._alias && hops++ < 3) { rate *= idx[sp].rate || 1; sp = idx[sp]._alias; }
+    return { sp, rate };
+  }
+  /** Pick `n` recordings for (species, kind); [] when the bank has none -> caller falls back to the synth. */
+  function pickRecordings(species, kind, n, seed) {
+    const idx = bankIndex || {}; const pool = poolFor(species)[kind]; if (!pool) return [];
+    let { sp, rate } = resolveSpecies(idx, species);
+    let files = (idx[sp] && idx[sp][pool]) || [];
+    if (!files.length && idx[sp] && idx[sp]._fallback) { const fb = resolveSpecies(idx, idx[sp]._fallback); sp = fb.sp; rate *= fb.rate; files = (idx[sp] && idx[sp][pool]) || []; }
+    if (!files.length) return [];
+    const r = rng((seed || 1) * 48271 + 11); const out = [];
+    for (let i = 0; i < n; i++) out.push({ url: 'sounds/' + sp + '/' + files[Math.floor(r() * files.length)], rate });
+    return out;
+  }
+  /** Play the real call(s) for a reaction. Returns null when there is no recording for this kind (use the synth),
+   *  else a handle { stop() }. `opts.text` sizes a 'talk' (1-3 calls); typing is one short, quiet call. */
+  function playAnimal(species, kind, opts) {
+    opts = opts || {};
+    const syl = kind === 'talk' ? syllableUnits(String(opts.text || '')).filter(u => u.syl).length : 0;
+    const n = kind === 'talk' ? Math.max(1, Math.min(3, Math.round(syl / 5))) : (kind === 'happy' || kind === 'greet') ? 2 : 1;
+    const picks = pickRecordings(species, kind, n, opts.seed);
+    if (!picks.length || typeof Audio === 'undefined') return null;
+    const vol = opts.volume == null ? (kind === 'typing' ? 0.3 : kind === 'hit' || kind === 'angry' ? 0.6 : 0.5) : opts.volume;
+    const players = []; let stopped = false, i = 0;
+    const next = () => {
+      if (stopped || i >= picks.length) return;
+      const pk = picks[i++]; const a = bankCache[pk.url] ? bankCache[pk.url].cloneNode() : new Audio(pk.url); bankCache[pk.url] = bankCache[pk.url] || a;
+      a.volume = vol; a.playbackRate = pk.rate * (kind === 'typing' ? 1.05 : 1); a.preservesPitch = false; a.mozPreservesPitch = false;
+      a.onended = () => setTimeout(next, 120 + Math.random() * 120); a.onerror = () => { if (opts.onFail) opts.onFail(); };
+      players.push(a); a.play().catch(() => { if (opts.onFail) opts.onFail(); });
+    };
+    next();
+    return { stop() { stopped = true; for (const a of players) { try { a.pause(); a.currentTime = 0; } catch (_) {} } } };
+  }
+
   /** The pet's voice kind, with a safe default for packs made before voice.kind existed. */
   function voiceKind(manifest, voiceIndex) {
     const v = (manifest && manifest.voice) || {};
@@ -343,5 +399,5 @@
     return (voiceIndex && Object.keys(voiceIndex).length) ? 'tts' : 'babble';
   }
 
-  global.KapiVoice = { PRESETS, SPECIES, SFX, REACTION_KINDS, planBabble, renderBabble, voiceKind, syllableUnits, planHit, planReaction, planAnimal, whipCrack, sfx };
+  global.KapiVoice = { PRESETS, SPECIES, SFX, REACTION_KINDS, planBabble, renderBabble, voiceKind, syllableUnits, planHit, planReaction, planAnimal, whipCrack, sfx, loadBank, playAnimal, pickRecordings, POOL };
 })(typeof window !== 'undefined' ? window : globalThis);

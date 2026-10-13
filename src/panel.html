@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Kapi</title>
+<style>
+  :root { --bg: #fffcf7; --ink: #2c2b29; --mute: #7e7972; --line: #e6dccf; --tint: #f2e8dc; --warm: #d1775a; --ok: #4caf50; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; font-size: 13px; user-select: none; }
+  #top { display: flex; align-items: center; gap: 10px; padding: 12px 16px 8px; border-bottom: 1px solid var(--line); }
+  #top h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  #top .sub { color: var(--mute); flex: 1; }
+  #top .coins { background: var(--tint); border-radius: 12px; padding: 3px 10px; }
+  #tabs { display: flex; gap: 4px; padding: 8px 12px 0; border-bottom: 1px solid var(--line); }
+  #tabs button { border: 0; background: transparent; padding: 8px 10px; font-size: 13px; color: var(--mute); cursor: pointer; border-bottom: 2px solid transparent; }
+  #tabs button.on { color: var(--ink); border-bottom-color: var(--warm); font-weight: 600; }
+  #body { padding: 12px 16px 20px; overflow: auto; height: calc(100% - 110px); box-sizing: border-box; }
+  h2 { font-size: 13px; margin: 14px 0 6px; color: var(--mute); font-weight: 600; }
+  h2:first-child { margin-top: 2px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip { background: var(--tint); border-radius: 10px; padding: 5px 10px; }
+  .chip.todo { background: transparent; border: 1px dashed var(--line); color: var(--mute); }
+  .chip.sub { opacity: .8; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid #f1ebe2; }
+  .row .lbl { flex: 1; }
+  .row .bar { width: 110px; height: 7px; background: #eee6da; border-radius: 4px; overflow: hidden; }
+  .row .bar i { display: block; height: 100%; background: var(--warm); }
+  .row.done .lbl { color: var(--mute); text-decoration: line-through; }
+  .row .tag { font-size: 11px; color: var(--warm); }
+  .hint { color: var(--mute); font-size: 12px; margin-top: 10px; line-height: 1.5; }
+  .finds { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+  .find { aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; background: var(--tint); border-radius: 12px; font-size: 26px; }
+  .find small { font-size: 10px; color: var(--mute); margin-top: 2px; }
+  .find.empty { background: transparent; border: 1px dashed var(--line); }
+  .journal p { margin: 0 0 8px; line-height: 1.5; } .journal b { color: var(--mute); font-weight: 500; margin-right: 6px; }
+  .ch { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f1ebe2; align-items: baseline; }
+  .ch .n { width: 36px; color: var(--mute); } .ch .name { width: 90px; font-weight: 600; } .ch.cur .name { color: var(--warm); } .ch .task { flex: 1; color: var(--mute); }
+  .ch.locked { opacity: .5; }
+  .btns { margin-top: 12px; display: flex; gap: 8px; }
+  .btns button { border: 0; border-radius: 10px; background: var(--tint); padding: 8px 14px; font-size: 13px; cursor: pointer; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .stat { background: var(--tint); border-radius: 10px; padding: 8px; text-align: center; } .stat b { display: block; font-size: 18px; font-weight: 600; } .stat small { color: var(--mute); }
+</style>
+</head>
+<body>
+  <div id="top"><h1 id="name">Kapi</h1><span class="sub" id="sub"></span><span class="coins" id="coins"></span></div>
+  <div id="tabs"></div>
+  <div id="body"></div>
+  <script src="i18n.js"></script>
+  <script src="growth.js"></script>
+  <script>
+  (async () => {
+    const q = new URLSearchParams(location.search); const dir = q.get('dir'); const lang = q.get('lang') || 'zh-CN';
+    const T = I18N.pick(lang); const G = T.growth; const P = G.panel;
+    const invoke = window.__TAURI__.core.invoke; const emit = window.__TAURI__.event.emit;
+    const sep = dir.includes('\\') ? '\\' : '/'; const join = (a, b) => a.replace(/[\\/]+$/, '') + sep + b;
+    let tab = 'skills', pet = null, persona = null, state = null;
+    const esc = (x) => String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    async function load() {
+      try {
+        pet = JSON.parse(await invoke('read_text', { path: join(dir, 'pet.json') }));
+        try { persona = JSON.parse(await invoke('read_text', { path: join(dir, 'persona.json') })); } catch (_) { persona = {}; }
+        try { state = JSON.parse(await invoke('read_text', { path: join(dir, 'state.json') })); } catch (_) { state = {}; }
+      } catch (e) { document.getElementById('body').textContent = String(e); return false; }
+      return true;
+    }
+    function summary() {
+      // the same Growth logic the pet uses, run read-only over the saved state (never saved from here)
+      const st = JSON.parse(JSON.stringify(state || {}));
+      const g = new Growth(st, { now: () => Date.now() / 1000, save: () => {}, manifest: pet, care: { s: st }, level: () => st.level || 1, t: () => T, say: () => {} });
+      return g.summary();
+    }
+    const actName = (id) => (G.candidates && G.candidates[id]) || id;
+    function render() {
+      if (!pet) return; const s = summary(); const lv = state.level || 1;
+      document.getElementById('name').textContent = pet.name || 'Kapi';
+      document.getElementById('sub').textContent = `Lv.${lv} · ${(T.care.titles || [])[Math.min(lv, 10) - 1] || ''} · ${G.chapter[s.chapter.id] || ''}`;
+      document.getElementById('coins').textContent = `♥ ${s.coins} ${G.coins}`;
+      const tabs = document.getElementById('tabs'); tabs.innerHTML = Object.entries(P.tabs).map(([k, v]) => `<button data-tab="${k}" class="${k === tab ? 'on' : ''}">${v}</button>`).join('');
+      tabs.querySelectorAll('button').forEach(b => b.onclick = () => { tab = b.dataset.tab; render(); });
+      const body = document.getElementById('body'); let h = '';
+      if (tab === 'skills') {
+        const cand = Object.keys(G.candidates).filter(id => !s.learned.includes(id) && !['eat', 'drink', 'sleep'].includes(id));
+        h += `<h2>${P.learned}</h2><div class="chips">${s.learned.length ? s.learned.map(id => `<span class="chip">${esc(actName(id))}</span>`).join('') : `<span class="chip todo">${P.empty}</span>`}</div>`;
+        if (s.standIn.length) h += `<h2>${P.standIn}</h2><div class="chips">${s.standIn.map(id => `<span class="chip todo">${esc((T.pending.labels || {})[id] || id)}</span>`).join('')}</div>`;
+        h += `<h2>${P.notYet}</h2><div class="chips">${cand.map(id => `<span class="chip todo">${esc(actName(id))}</span>`).join('')}</div>`;
+        h += `<h2>${P.expr}</h2><div class="chips">${s.expressions.length ? s.expressions.map(e => `<span class="chip sub">${esc(e)}</span>`).join('') : `<span class="chip todo">${P.empty}</span>`}</div>`;
+        const look = s.look === 'ring' ? P.lookRing : s.look === 'frames8' ? P.lookFrames : P.lookNone;
+        const v = s.voice; const voice = v.kind === 'tts' ? P.voiceTts : v.kind === 'none' ? P.voiceNone : v.species ? P.voiceSpecies(v.species) : P.voiceBabble;
+        h += `<h2>${P.look} · ${P.voice}</h2><div class="chips"><span class="chip sub">${look}</span><span class="chip sub">${voice}</span>${s.outfits.map(o => `<span class="chip sub">👕 ${esc(o)}</span>`).join('')}</div>`;
+        const st = s.stats || {};
+        h += `<h2>${P.stats}</h2><div class="stats">${[['stroke', P.statStroke], ['click', P.statClick], ['type', P.statType], ['feed', P.statFeed], ['water', P.statWater], ['whip', P.statWhip], ['gift', P.statGift]].map(([k, l]) => `<div class="stat"><b>${st[k] || 0}</b><small>${l}</small></div>`).join('')}<div class="stat"><b>${s.best.catch || 0}</b><small>${P.statCatch}</small></div></div>`;
+        h += `<p class="hint">${P.hint}</p>`;
+      } else if (tab === 'wishes') {
+        h += `<h2>${P.wishesToday} · ${s.day}</h2>`;
+        for (const w of s.wishes) {
+          const label = (G.wish[w.kind] || w.kind).replace('{n}', w.target); const pct = Math.round(100 * Math.min(1, w.progress / w.target));
+          h += `<div class="row ${w.done ? 'done' : ''}"><span>${w.done ? '✓' : '○'}</span><span class="lbl">${esc(label)} ${w.platform ? `<span class="tag">${P.platformWish}</span>` : ''}</span><span class="bar"><i style="width:${pct}%"></i></span></div>`;
+        }
+        h += `<div class="btns"><button data-cmd="game">${G.play}</button><button data-cmd="care">${T.care.feed} / ${T.care.water}</button></div>`;
+        h += `<p class="hint">${G.coinsHint}。${s.sulk ? G.sulkStart : ''}</p>`;
+      } else if (tab === 'finds') {
+        const seen = new Map(); for (const f of s.finds) seen.set(f.id, (seen.get(f.id) || 0) + 1);
+        const items = [...seen.entries()];
+        if (!items.length) h += `<p class="hint">${P.noFinds}</p>`;
+        const pages = Math.max(1, Math.ceil(Math.max(items.length, 1) / 6));
+        for (let p = 0; p < pages; p++) {
+          h += `<h2>${P.page(p + 1)}</h2><div class="finds">`;
+          for (let i = 0; i < 6; i++) { const it = items[p * 6 + i]; const def = it && GROWTH_DEFS.FINDS.find(f => f.id === it[0]);
+            h += it ? `<div class="find">${def ? def.emoji : '?'}<small>${esc(G.find[it[0]] || it[0])}${it[1] > 1 ? ' ×' + it[1] : ''}</small></div>` : `<div class="find empty"></div>`; }
+          h += `</div>`;
+        }
+        h += `<p class="hint">${P.bestCatch(s.best.catch || 0)} · ${P.games(s.games || 0)}</p>`;
+      } else if (tab === 'journal') {
+        h += `<div class="journal">${s.journal.length ? s.journal.slice().reverse().map(j => `<p><b>${j.day}</b>${esc(j.text)}</p>`).join('') : `<p class="hint">${P.empty}</p>`}</div>`;
+      } else if (tab === 'chapters') {
+        for (const c of s.chapters) {
+          const cur = c.id === s.chapter.id; const locked = lv < c.from; const task = c.task ? G.task[c.task] : '';
+          const done = c.task ? (cur ? s.chapter.taskDone : lv > c.from) : null;
+          h += `<div class="ch ${cur ? 'cur' : ''} ${locked ? 'locked' : ''}"><span class="n">Lv.${c.from}</span><span class="name">${G.chapter[c.id]}</span><span class="task">${task ? `${esc(task)} · ${done ? P.taskDone : P.taskTodo}` : ''}</span></div>`;
+        }
+        h += `<p class="hint">${P.hint}</p>`;
+      }
+      body.innerHTML = h;
+      body.querySelectorAll('button[data-cmd]').forEach(b => b.onclick = () => emit('panel-cmd', { cmd: b.dataset.cmd }));
+      document.title = `${pet.name || 'Kapi'} · ${P.title}`;
+    }
+    window.__panel = { setTab: (t) => { tab = t; render(); }, body: () => document.getElementById('body').innerHTML };   // tests
+    if (await load()) render();
+    setInterval(async () => { if (await load()) render(); }, 2000);
+  })();
+  </script>
+</body>
+</html>

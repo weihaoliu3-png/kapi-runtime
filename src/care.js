@@ -70,6 +70,7 @@
       st.lastCare[kind] = Date.now();
       this._gainXp(c.xp, kind);
       if (c.expr) this.host.expr(c.expr, 2000);
+      if (this.host.onCare) this.host.onCare(kind);
       this.host.play(kind === 'feed' ? 'eat' : kind === 'water' ? 'drink' : 'nod');
       if (!silent) {
         if (this.host.react) this.host.react(kind === 'feed' ? 'feed' : kind === 'water' ? 'drink' : 'happy', c.say, kind === 'pet' ? 0.25 : 0.4, T.fallback[c.say]);
@@ -77,7 +78,7 @@
       }
       this.host.save(st); return true;
     }
-    sleep() { const st = this.s; const T = this.host.t().care; st.sleeping = true; st.sleepSince = Date.now(); this.host.setSleeping(true); if (this.host.react) this.host.react('sleep', 'sleep', 0.6, T.fallback.sleep); else this.host.say(this.host.line('sleep') || T.fallback.sleep); this._gainXp(CARE.sleep.xp, 'sleep'); this.host.save(st); if (this.host.pending) this.host.pending('sleep'); return true; }
+    sleep() { const st = this.s; const T = this.host.t().care; st.sleeping = true; st.sleepSince = Date.now(); this.host.setSleeping(true); if (this.host.onCare) this.host.onCare('sleep'); if (this.host.react) this.host.react('sleep', 'sleep', 0.6, T.fallback.sleep); else this.host.say(this.host.line('sleep') || T.fallback.sleep); this._gainXp(CARE.sleep.xp, 'sleep'); this.host.save(st); if (this.host.pending) this.host.pending('sleep'); return true; }
     wake(natural) { const st = this.s; const T = this.host.t().care; if (!st.sleeping) return false; st.sleeping = false; this.host.setSleeping(false); if (this.host.react) this.host.react('wake', null, 0, ''); this.host.say(natural ? (this.host.line('wakeUp') || T.fallback.wakeUp) : (this.host.line('wokenUp') || T.fallback.wokenUp)); this.host.save(st); return true; }
     _gainXp(n, kind) {
       const st = this.s; const day = new Date().toISOString().slice(0, 10);

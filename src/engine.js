@@ -20,7 +20,15 @@
     drink:   (t) => { const D = 2.6; const p = Math.min(1, t / D); const tilt = t > 1.0 && t < 2.1 ? -6 : 0;
                       return { rot: tilt, overlay: { icon: '💧', from: [0.3, 0.55], to: [0.06, 0.26], at: Math.min(1, t / 1.0), hide: t > 2.1 }, done: p >= 1 }; },
     slump:   (t) => ({ dy: 14 * Math.min(1, t / 0.8), rot: -6 * Math.min(1, t / 0.8), zzz: true }),
+    // 0.8.16 "alive" idle moves: small whole-body motions the life scheduler (behaviors.js) sprinkles between events
+    stretch: (t) => { const D = 1.6; const p = Math.min(1, t / D); const up = Math.sin(Math.min(1, p / 0.45) * Math.PI / 2); const down = p > 0.6 ? (p - 0.6) / 0.4 : 0;
+                      return { sy: 1 + 0.07 * up - 0.03 * down, sx: 1 - 0.03 * up + 0.015 * down, dy: -4 * up, done: p >= 1 }; },
+    tilt:    (t) => { const D = 1.8; const p = Math.min(1, t / D); const e = p < 0.25 ? p / 0.25 : p > 0.75 ? (1 - p) / 0.25 : 1; return { rot: 7 * e, done: p >= 1 }; },
+    shiver:  (t) => { const p = Math.min(1, t / 0.5); return { dx: 2.5 * Math.sin(p * Math.PI * 14), rot: 1.5 * Math.sin(p * Math.PI * 14), done: p >= 1 }; },
+    yawn:    (t) => { const D = 1.7; const p = Math.min(1, t / D); const o = Math.sin(p * Math.PI); return { sy: 1 + 0.04 * o, dy: -3 * o, rot: -2 * o, done: p >= 1 }; },
+    settle:  (t) => { const p = Math.min(1, t / 0.7); const q = Math.sin(p * Math.PI); return { sy: 1 - 0.06 * q, sx: 1 + 0.04 * q, dy: 3 * q, done: p >= 1 }; },
   };
+  const LIFE_PRESETS = ['stretch', 'tilt', 'shiver', 'yawn', 'settle', 'jump'];
   const DIRS = ['d000', 'd045', 'd090', 'd135', 'd180', 'd225', 'd270', 'd315'];
   const PRIORITY = { drag: 100, user: 80, chat: 60, sleep: 40, random: 20, idle: 0 };
 
@@ -34,9 +42,11 @@
       this.now = this.opts.now || (() => performance.now() / 1000);
       this.canvasW = this.m.render.canvas[0]; this.canvasH = this.m.render.canvas[1];
       if (!this.m.actions.typing) this.m.actions.typing = { type: 'procedural', preset: 'typing' };
+      for (const id of LIFE_PRESETS) if (!this.m.actions[id]) this.m.actions[id] = { type: 'procedural', preset: id, builtin: true };   // 0.8.16 idle life
       this.flip = false; this.extraRot = 0;
       this.state = { action: 'idle', prio: PRIORITY.idle, t0: this.now(), seqIdx: 0, frameT0: this.now(), loopsDone: 0, waking: false };
       this.look = { target: 'base', current: 'base', fadeFrom: null, fadeT0: 0, lastChange: -Infinity, sectorIdx: -1 };
+      this.lookScript = null;                 // 0.8.16: a scripted glance ({dirs, i, next, hold}) that drives the look while the cursor is far away
       this.expr = { name: null, until: 0 };   // temporary expression frame (happy / surprised / sleepy)
       this.sleeping = false;                  // care system: sleeping keeps eyes closed and blocks random actions
       this.blink = { until: 0, next: this.now() + 3 + Math.random() * 4 };
@@ -52,8 +62,21 @@
     _randIn() { const [a, b] = this.m.triggers.idleRandomEverySec || [40, 120]; return a + Math.random() * (b - a); }
 
     // ---------- public API used by main.js ----------
+    /** 0.8.16: look along `dirs` (['d270','d225','base', …]) holding each `holdSec`; the cursor coming near cancels it. */
+    lookAlong(dirs, holdSec) { if (this.sleeping || !this.img.look) return false; this.lookScript = { dirs: dirs.slice(), i: 0, next: this.now() + (holdSec || 0.9), hold: holdSec || 0.9 }; return true; }
+    _scriptedVector(dx, dy, lf) {
+      const sc = this.lookScript; if (!sc) return null;
+      const rr = lf.radiusPx || 600; const t = this.now();
+      if (Math.hypot(dx, dy) < rr * 0.5 || this.hover || this.drag.active) { this.lookScript = null; return null; }   // the real cursor wins
+      if (t >= sc.next) { sc.i += 1; sc.next = t + sc.hold; }
+      if (sc.i >= sc.dirs.length) { this.lookScript = null; return { dx: 0, dy: 0 }; }
+      const d = sc.dirs[Math.min(sc.i, sc.dirs.length - 1)]; const k = DIRS.indexOf(d);
+      if (k < 0) return { dx: 0, dy: 0 };
+      const a = k * Math.PI / 4; return { dx: Math.sin(a) * rr * 0.4, dy: -Math.cos(a) * rr * 0.4 };
+    }
     setLookVector(dx, dy) {
       const lf = this.m.lookFollow || {};
+      const sv = this._scriptedVector(dx, dy, lf); if (sv) { dx = sv.dx; dy = sv.dy; }
       if (lf.mode === 'ring') return this._setLookRing(dx, dy, lf);
       if (lf.mode !== 'frames8') return;
       if (this.sleeping) return;
@@ -360,5 +383,5 @@
   }
 
   global.PetEngine = PetEngine;
-  global.PET_PRIORITY = PRIORITY;
+  global.PET_PRIORITY = PRIORITY; global.PET_DIRS = DIRS; global.PET_LIFE_PRESETS = LIFE_PRESETS;
 })(typeof window !== 'undefined' ? window : globalThis);

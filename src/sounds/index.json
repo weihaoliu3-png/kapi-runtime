@@ -1,0 +1,93 @@
+{
+ "cat": {
+  "talk": [
+   "talk-01.mp3",
+   "talk-02.mp3",
+   "talk-03.mp3",
+   "talk-04.mp3",
+   "talk-05.mp3",
+   "talk-06.mp3",
+   "talk-07.mp3",
+   "talk-08.mp3",
+   "talk-09.mp3",
+   "talk-10.mp3",
+   "talk-11.mp3",
+   "talk-12.mp3",
+   "talk-13.mp3",
+   "talk-14.mp3",
+   "talk-15.mp3"
+  ],
+  "angry": [
+   "angry-01.mp3",
+   "angry-02.mp3",
+   "angry-03.mp3",
+   "angry-04.mp3"
+  ],
+  "stroke": [
+   "stroke-01.mp3"
+  ],
+  "hiss": [
+   "hiss-01.mp3"
+  ],
+  "whine": [
+   "whine-01.mp3",
+   "whine-02.mp3"
+  ]
+ },
+ "dog": {
+  "talk": [
+   "talk-01.mp3",
+   "talk-02.mp3"
+  ],
+  "howl": [
+   "howl-01.mp3"
+  ]
+ },
+ "dog-large": {
+  "talk": [
+   "talk-01.mp3",
+   "talk-02.mp3",
+   "talk-03.mp3",
+   "talk-04.mp3"
+  ]
+ },
+ "dog-small": {
+  "talk": [
+   "talk-01.mp3",
+   "talk-02.mp3",
+   "talk-03.mp3",
+   "talk-04.mp3",
+   "talk-05.mp3",
+   "talk-06.mp3",
+   "talk-07.mp3",
+   "talk-08.mp3"
+  ]
+ },
+ "bird": {
+  "talk": [
+   "talk-01.mp3",
+   "talk-02.mp3",
+   "talk-03.mp3",
+   "talk-04.mp3"
+  ]
+ },
+ "rodent": {
+  "talk": [
+   "talk-01.mp3"
+  ],
+  "whine": [
+   "whine-01.mp3"
+  ]
+ },
+ "rabbit": {
+  "thump": [
+   "thump-01.mp3",
+   "thump-02.mp3"
+  ],
+  "_fallback": "rodent"
+ },
+ "kitten": {
+  "_alias": "cat",
+  "rate": 1.18
+ }
+}

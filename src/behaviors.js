@@ -19,6 +19,61 @@
       this.v = { x: 0, y: 0 }; this.target = null; this.flip = false; this.lastPerchRect = null;
       this.typing = { count: 0, lastNod: 0, fastStreak: 0, lastBurst: -Infinity, lastTick: 0 }; this.lastLowBattery = 0; this.lastGreet = {};
       this.wanderAt = performance.now() / 1000 + 90 + Math.random() * 120; this.clingUntil = 0;
+      this.lifeAt = performance.now() / 1000 + 12 + Math.random() * 15; this.lastLife = '';
+    }
+
+    // ---------- 0.8.16 desktop awareness: the user clicking around the screen ----------
+    /** A mouse button went down at screen (x, y) (physical px / scale handled by the host). Not on the pet itself. */
+    onDesktopClick(button, x, y) {
+      const e = this.h.engine; const w = this.h.getWin(); const t = performance.now() / 1000;
+      if (!w || e.sleeping || e.drag.active || e.hover) return null;
+      this.clicks = (this.clicks || []).filter(c => t - c.t < 1.2); this.clicks.push({ t, x, y });
+      const dirs = global.PET_DIRS || ['d000', 'd045', 'd090', 'd135', 'd180', 'd225', 'd270', 'd315'];
+      const dx = x - (w.x + w.w / 2), dy = y - (w.y + w.h * 0.25); let ang = Math.atan2(dx, -dy) * 180 / Math.PI; if (ang < 0) ang += 360;
+      const dir = dirs[Math.round(ang / 45) % 8];
+      // a burst of clicks (double-click, frantic clicking) -> startled; a single click -> a glance that way, only sometimes
+      if (this.clicks.length >= 3) { this.clicks = []; if (t - (this.lastStartle || 0) > 12) { this.lastStartle = t; this.h.expr('surprised', 1400); e.play('shiver', global.PET_PRIORITY.random); if (this.h.react) this.h.react('surprise', 0.3); e.lookAlong([dir, 'base'], 1.2); return 'startle'; } return null; }
+      if (button === 'right') { if (t - (this.lastGlance || 0) > 3) { this.lastGlance = t; e.lookAlong([dir, 'base'], 1.6); return 'glance'; } return null; }
+      if (Math.hypot(dx, dy) < 260) { if (t - (this.lastGlance || 0) > 2) { this.lastGlance = t; e.lookAlong([dir, 'base'], 1.0); return 'glance'; } return null; }   // close by: always look
+      if (t - (this.lastGlance || 0) > 6 && Math.random() < 0.45) { this.lastGlance = t; e.lookAlong([dir, 'base'], 1.2); return 'glance'; }
+      return null;
+    }
+
+    // ---------- 0.8.16 idle life: something small every 15-45 s so the pet never sits like a sticker ----------
+    _lifeInterval() {
+      const mood = this.h.mood ? this.h.mood() : 70;                        // 0..100; a happy pet fidgets more
+      const k = 1.6 - Math.max(0, Math.min(100, mood)) / 100 * 0.8;           // 0.8x (mood 100) .. 1.6x (mood 0)
+      return (15 + Math.random() * 30) * k;
+    }
+    lifeAct() {
+      const e = this.h.engine; const m = (e.m && e.m.actions) || {};
+      const dirs = global.PET_DIRS || ['d000', 'd045', 'd090', 'd135', 'd180', 'd225', 'd270', 'd315'];
+      const learned = Object.keys(m).filter(id => m[id].type === 'frames' && !['eat', 'drink', 'sleep', 'typing'].includes(id));
+      const menu = [
+        ['lookAround', 24], ['glance', 12], ['stretch', 12], ['tilt', 12], ['wander', 12], ['yawn', 7], ['shiver', 5], ['hop', 5], ['settle', 6], ['learned', learned.length ? 8 : 0],
+      ].filter(([id]) => id !== this.lastLife);
+      const total = menu.reduce((q, x) => q + x[1], 0); let r = Math.random() * total; let pick = menu[0][0];
+      for (const [id, w] of menu) { r -= w; if (r <= 0) { pick = id; break; } }
+      this.lastLife = pick;
+      const cursor = this.h.getCursor(), w = this.h.getWin();
+      switch (pick) {
+        case 'lookAround': {                                               // a slow look to one side, then the other, back to front
+          const a = dirs[2 + Math.floor(Math.random() * 3) * 2];           // d090 / d180 / d270
+          const b = a === 'd090' ? 'd270' : a === 'd270' ? 'd090' : (Math.random() < 0.5 ? 'd090' : 'd270');
+          if (!e.lookAlong([a, 'base', b, 'base'], 0.8 + Math.random() * 0.5)) this.wander(); break; }
+        case 'glance': {                                                   // look where the cursor is, even far away
+          if (cursor && w) { const dx = cursor.x - (w.x + w.w / 2), dy = cursor.y - (w.y + w.h * 0.25); let ang = Math.atan2(dx, -dy) * 180 / Math.PI; if (ang < 0) ang += 360;
+            e.lookAlong([dirs[Math.round(ang / 45) % 8], 'base'], 1.4); } break; }
+        case 'stretch': e.play('stretch', global.PET_PRIORITY.random); this.h.expr('happy', 1200); break;
+        case 'tilt': e.play('tilt', global.PET_PRIORITY.random); break;
+        case 'wander': this.wander(); break;
+        case 'yawn': e.play('yawn', global.PET_PRIORITY.random); this.h.expr('sleepy', 1800); if (this.h.react && Math.random() < 0.4) this.h.react('sleep', 0.3); break;
+        case 'shiver': e.play('shiver', global.PET_PRIORITY.random); break;
+        case 'hop': e.play('jump', global.PET_PRIORITY.random); if (this.h.react && Math.random() < 0.3) this.h.react('happy', 0.3); break;
+        case 'settle': e.play('settle', global.PET_PRIORITY.random); break;
+        case 'learned': e.play(learned[Math.floor(Math.random() * learned.length)], global.PET_PRIORITY.random); break;
+      }
+      return pick;
     }
 
     // ---------- throw ----------
@@ -137,6 +192,11 @@
         if (dist <= sp) { const t = this.target; this.target = null; const done = this.mode; if (this.mode === 'walk') this.mode = 'idle'; this._perchMove = false; return { x: t.x, y: t.y, rot: 0, flip: this.flip, arrived: done }; }
         const bob = Math.sin(performance.now() / 90) * 3;
         return { x: w.x + dx / dist * sp, y: w.y + dy / dist * sp + (this.mode === 'walk' ? bob : 0), rot: 0, flip: this.flip, walking: true };
+      }
+      if (this.mode === 'idle' && performance.now() / 1000 > this.lifeAt) {
+        const t = performance.now() / 1000; this.lifeAt = t + this._lifeInterval();
+        const e = this.h.engine;
+        if (!e.hover && e.state.action === 'idle' && !e.sleeping && !e.drag.active && !(this.h.busy && this.h.busy()) && !e.lookScript) this.lifeAct();
       }
       if (this.mode === 'idle' && performance.now() / 1000 > this.wanderAt) {
         this.wanderAt = performance.now() / 1000 + 180 + Math.random() * 240;

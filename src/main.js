@@ -22,6 +22,7 @@
   const t = () => T;
   let currentOutfit = 'default';
   let beh = null, winRect = null, monRect = null, cursorLogical = null, perchTimer = null, batteryTimer = null, rectTimer = null;
+  let growth = null, catchGame = null, findShow = null, lastInputSec = 0;   // 0.9.0 growth: wishes / finds / diary / sulk / catch game
   let milestones = null, garden = null, props = { cup: null, flowers: {} }, videoFx = {}, interState = null, fxAbort = null, fxRun = 0, fxQueue = null;
   // Built-in real-video effects shipped with the runtime (src/fx/<id>/000..N.webp): every pet has them; a package may
   // override one with its own effects.<id>. Loaded on first use, kept for the session.
@@ -36,9 +37,9 @@
     return builtinFxCache[id];
   }
   let ctrlHeld = false, whipPrev = null, whipOver = false, whipArmed = true, whipDistance = 0, whipDirection = 0, whipMarks = [];
-  const isMain = win.label === 'pet';
-  const wantedPetId = new URLSearchParams(location.search).get('pet');
-  const otherPets = {};   // label -> {id, name, rect, t}
+  // 0.8.16: one pet per process. Another pet on the desktop is another Kapi folder running its own exe; the two only
+  // meet through the peer file exchange (peer_pets) used for greetings. No second window, no summon, no release.
+  const peers = {};   // folder key -> {id, name, rect, t}
 
   async function refreshRects() {
     try {
@@ -80,6 +81,7 @@
 
   // ---------- pet loading ----------
   async function loadPet(info) {
+    KapiVoice.loadBank();                                              // real animal recordings index (0.8.16), no-op for a human pet
     const manifest = JSON.parse(await invoke('read_text', { path: join(info.dir, 'pet.json') }));
     let persona = {}; try { persona = JSON.parse(await invoke('read_text', { path: join(info.dir, 'persona.json') })); } catch (_) {}
     if (manifest.schema !== 2) throw new Error(I18N.pick(persona.language).needNewer);
@@ -130,7 +132,7 @@
     engine = new PetEngine({ manifest, persona, images }, {
       onSay: (text, sticky) => say(text, sticky),
       onAction: () => {},
-      onStroke: () => { if (milestones) milestones.record('stroke'); },
+      onStroke: () => { if (milestones) milestones.record('stroke'); if (growth) growth.record('stroke'); },
     });
     await setupCare();
     setupInteractions();
@@ -141,13 +143,15 @@
       setWin: () => {}, say: (x, st) => say(x, st), expr: (n, ms) => engine.showExpression(n, ms),
       play: (id) => { if (pet.manifest.actions[id]) engine.play(id); }, line: (k) => care.host.line(k), t,
       react: (kind, vol) => reaction(kind, true, vol), sfx: (name, vol) => sound(name, vol),      // 0.8.15: every behaviour sounds
+      mood: () => (care ? care.s.mood : 70), busy: () => bubble.style.display === 'block' || careEl.style.display === 'block',   // 0.8.16 idle life
     });
-    if (isMain) { settings.activePetId = info.id; await saveSettings(); }
+    settings.activePetId = info.id; await saveSettings();
     greet();
     setupReminders();
     setupTeachHints();
     if (!settings.hintShown) { setTimeout(() => say(T.hint, true), 2500); settings.hintShown = true; await saveSettings(); }
     await pendingFirstHint();
+    typingPermissionHint();
   }
 
   // ---------- skills still waiting to be hatched (0.8.11) ----------
@@ -195,8 +199,21 @@
     if (fxAbort) fxAbort.abort();
     fxQueue = new KapiFx.Queue((effect, m) => playEffect(effect, m));
     milestones = new Milestones(pet.manifest.milestones, { now, state: st, save, say: (k) => say(lineOr(k)), fire: (effect, m) => fxQueue.request(effect, m) });
-    garden = new Garden(pet.manifest.garden, { now, state: st, save, say: (k) => say(lineOr(k)), onPick: () => milestones.record('flower'),
+    garden = new Garden(pet.manifest.garden, { now, state: st, save, say: (k) => say(lineOr(k)), onPick: () => { milestones.record('flower'); if (growth) growth.record('flower'); },
       sfx: (name, vol) => sound(name, vol), react: (kind) => reaction(kind, true) });
+    // 0.9.0 growth: today's wishes, finds while away, the diary, sulking, chapters, catch-game records
+    const G = T.growth;
+    growth = new Growth(st, { now, save, manifest: pet.manifest, care, level: () => (care ? care.s.level : 1), t,
+      say: (key, vars) => {
+        const own = care.host.line(key === 'wishDone' ? 'wish' + vars.wish[0].toUpperCase() + vars.wish.slice(1) : key);
+        const txt = own || (key === 'wishDone' ? G.wishDone[vars.wish] : key === 'findSay' ? G.findSay(vars.name) : G[key]);
+        if (txt) say(Array.isArray(txt) ? txt[Math.floor(Math.random() * txt.length)] : txt, key === 'findSay');
+      },
+      react: (kind) => reaction(kind, true), sfx: (name, vol) => sound(name, vol), fire: (effect) => fxQueue.request(effect, { effect }) });
+    lastInputSec = now();
+    const key = pet.id + '@' + pet.manifest.version;
+    if (st.growth.seenVersion && st.growth.seenVersion !== key) growth.onPackageChanged();   // a newer package: did it learn something?
+    st.growth.seenVersion = key; save();
   }
   /** Head anchor (window px): top-centre of the pet, where the flower sits; and hand anchor for the cup throw. */
   function headPoint() { return { x: PAD_SIDE + dispW / 2, y: PAD_TOP + dispH * 0.04 }; }
@@ -276,6 +293,7 @@
       play: (id) => { if (!pet.manifest.actions[id] && (id === 'eat' || id === 'drink')) pet.manifest.actions[id] = { type: 'procedural', preset: id }; if (pet.manifest.actions[id]) engine.play(id); else engine.play('nod'); pendingAfterCare(id); },
       pending: (id) => pendingAfterCare(id),
       react: (kind, key, chance, fb) => react(kind, key, chance, fb), sfx: (name, vol) => sound(name, vol),
+      onCare: (kind) => { if (growth) growth.record(kind === 'feed' ? 'feed' : kind === 'water' ? 'water' : kind === 'sleep' ? 'sleep' : 'stroke'); },
       setSleeping: (on) => engine.setSleeping(on), setStageScale: async (k) => { stageScale = k; await applyScale(); }, toast: (m) => toast(m, 4000),
       save: (state) => invoke('write_text', { path: stateFile, content: JSON.stringify(state) }).catch(() => {}), t,
       line: (key) => { const L = (pet.persona.lines || {})[key]; return L && L.length ? L[Math.floor(Math.random() * L.length)] : null; },
@@ -385,6 +403,8 @@
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       engine.draw(ctx, scale, PAD_SIDE, PAD_TOP);
       drawGardenOverlay();
+      if (catchGame) { stepCatchGame(); drawCatchGame(); }
+      drawFindOverlay();
       drawDizzyOverlay();
       drawWhip();
       positionBubble();
@@ -479,7 +499,7 @@
       // sound: the whip crack (procedural) and the pet's own "ouch" (recorded whipReact clip when the pack has one,
       // else a short babble in the pet's timbre) — both on every valid hit, both silent when muted
       if (!settings.muted) KapiVoice.whipCrack(0.6);
-      react('hit', 'whipReact', REACT_CHANCE.hit, (T.inter && T.inter.whipReact) || '!');
+      react('hit', 'whipReact', REACT_CHANCE.hit, (T.inter && T.inter.whipReact) || '!'); if (growth) growth.record('whip');
       whipFlash = { x, y, at: performance.now() };
     }
     whipOver = true;
@@ -500,7 +520,7 @@
       let local = null, alpha = null;
       try { if (cursorLogical && winRect) { local = { x: cursorLogical.x - winRect.x, y: cursorLogical.y - winRect.y }; alpha = petAlphaAt(local.x, local.y); } } catch (_) {}
       const line = JSON.stringify({ at: new Date().toISOString(), label: win.label, pet: pet && pet.id, engine: !!engine, hidden, dragging, cursor: cursorLogical, local, alpha, win: winRect,
-                                    ignoreCursorEvents: lastHitVisible === null ? null : !lastHitVisible, diag: pollDiag, otherPets: Object.keys(otherPets) });
+                                    ignoreCursorEvents: lastHitVisible === null ? null : !lastHitVisible, diag: pollDiag, peers: Object.keys(peers) });
       const path = settingsFile.replace(/settings\.json$/, 'kapi-debug.log');
       let prev = ''; try { prev = await invoke('read_text', { path }); } catch (_) {}
       const lines = (prev ? prev.split('\n') : []).filter(Boolean).slice(-80); lines.push(line);
@@ -598,6 +618,7 @@
   // ---------- mouse ----------
   canvas.addEventListener('mousedown', async (e) => {
     if (!engine || e.button !== 0) return;
+    if (catchGame && catchHit(e.clientX, e.clientY)) return;              // 0.9.0: a click on the light scores, never starts a drag
     if (petAlphaAt(e.clientX, e.clientY) <= 25) return;
     const sf = await win.scaleFactor();
     dragStartCursor = (await cursorPosition()).toLogical(sf); dragStartWin = (await win.outerPosition()).toLogical(sf);
@@ -614,7 +635,8 @@
       else if (beh && beh.checkEdgeAfterDrag()) { /* cling then climb back */ }
       else await keepOnScreen();
     }
-    else if (performance.now() - mouseDownAt < 400) { if (beh && beh.mode === 'peek') beh.unpeek(); else if (care && care.s.sleeping) care.wake(false); else { engine.click((e.clientY - PAD_TOP) / Math.max(1, dispH)); if (milestones) milestones.record('click'); } }
+    else if (performance.now() - mouseDownAt < 400) { if (beh && beh.mode === 'peek') beh.unpeek(); else if (care && care.s.sleeping) care.wake(false); else if (growth && growth.sulking()) { engine.showExpression('angry', 1500); const L = T.growth.sulkIgnore; say(L[Math.floor(Math.random() * L.length)]); growth.record('click'); }
+      else { engine.click((e.clientY - PAD_TOP) / Math.max(1, dispH)); if (milestones) milestones.record('click'); if (growth) growth.record('click'); } }
   });
   // no double-click action (0.8.12): quick repeated clicks used to pop the care panel by accident; the panel opens only
   // from the 🐾 button and the right-click menu
@@ -677,6 +699,10 @@
     if (kind === 'none') return;
     const v = pet.manifest.voice || {};
     if (kind === 'babble') {
+      if (v.species) {                                                                                                       // a real animal: its own recorded call (0.8.16), synth only as fallback
+        const real = KapiVoice.playAnimal(v.species, opts.hit ? 'hit' : 'talk', { text, seed: seq, volume: opts.hit ? 0.6 : 0.5 });
+        if (real) { currentBabble = real; return; }
+      }
       const plan = v.species ? KapiVoice.planAnimal(v.species, opts.hit ? 'hit' : 'talk', { text, hz: v.baseHz, seed: seq })          // a real animal meows / barks its line (0.8.14)
                  : opts.hit ? KapiVoice.planHit({ preset: v.preset || 'bright', hz: v.baseHz ? v.baseHz * 1.45 : undefined, seed: seq })
                             : KapiVoice.planBabble(text, { preset: v.preset || 'bright', hz: v.baseHz, rate: v.rate });
@@ -711,6 +737,7 @@
     const k = KapiVoice.voiceKind(pet.manifest, voiceIndex); if (k === 'none') return;
     const v = pet.manifest.voice || {};
     if (currentBabble) { try { currentBabble.stop(); } catch (_) {} }
+    if (v.species) { const real = KapiVoice.playAnimal(v.species, kind, { seed: ++reactSeq, volume }); if (real) { currentBabble = real; return; } }   // recorded call first (0.8.16)
     const plan = v.species ? KapiVoice.planAnimal(v.species, kind, { hz: v.baseHz, seed: ++reactSeq })
                            : KapiVoice.planReaction(kind, { preset: v.preset || (k === 'babble' ? 'bright' : 'female'), hz: v.baseHz, seed: ++reactSeq });
     currentBabble = KapiVoice.renderBabble(plan, volume != null ? volume : kind === 'hit' ? 0.55 : 0.42);
@@ -724,6 +751,90 @@
     const line = lineKey ? (care && care.host.line(lineKey)) || fallbackText || null : null;
     if (line && Math.random() < p) { say(line, false, { force: kind === 'hit', hit: kind === 'hit', kind }); return; }
     reaction(kind, kind === 'hit');
+  }
+
+  // ---------- 0.9.1: typing reactions need the Accessibility permission on macOS; never block the pet on it ----------
+  async function enableTyping() {
+    try { const ok = await invoke('request_input_permission'); toast(ok ? T.perm.on : T.perm.howTo, ok ? 3000 : 12000); } catch (e) { toast(String(e), 4000); }
+  }
+  async function typingPermissionHint() {
+    try {
+      const st = await invoke('input_watcher_state');
+      if (!st || !st.macos || st.active || settings.typingHintShown) return;
+      settings.typingHintShown = true; await saveSettings();
+      setTimeout(() => toast(T.perm.hint, 10000), 6000);
+    } catch (_) {}
+  }
+  listen('input-watcher', (e) => { const p = e.payload || {}; if (p.active) toast(T.perm.on, 3000); });
+
+  // ---------- 0.9.0: the notebook window, finds, the catch game ----------
+  async function openNotebook() {
+    if (!pet) return;
+    try { await invoke('open_panel_window', { petDir: pet.dir, lang: pet.persona.language || 'zh-CN' }); } catch (e) { toast(String(e), 4000); }
+    if (growth) growth.record('panel');
+  }
+  /** It brings the find to you: the emoji floats up from its paws and stays 6 s, with its line. */
+  function showFind(f) {
+    const G = T.growth; findShow = { emoji: f.emoji, t0: performance.now(), page: !!f.page };
+    const name = (G.find[f.id] || f.id) + (f.new ? G.findNew : '');
+    engine.showExpression('happy', 3000); engine.play('jump', PET_PRIORITY.user); sound('chime', 0.35);
+    say(G.findSay(name), true);
+    if (f.page) setTimeout(() => { say(G.findPage, true); sound('fanfare', 0.45); }, 6500);
+  }
+  function drawFindOverlay() {
+    if (!findShow) return; const age = (performance.now() - findShow.t0) / 1000; if (age > 6) { findShow = null; return; }
+    const hp = headPoint(); const y = PAD_TOP + dispH * 0.62 - Math.min(1, age / 0.6) * dispH * 0.25 + Math.sin(age * 3) * 3;
+    const x = PAD_SIDE + dispW * 0.72; const a = age > 5.2 ? (6 - age) / 0.8 : 1;
+    ctx.save(); ctx.globalAlpha = a; ctx.font = `${Math.round(Math.max(22, dispW * 0.16))}px system-ui, "Apple Color Emoji", "Segoe UI Emoji"`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(findShow.emoji, x, y); ctx.restore();
+  }
+  // Catch the light: a bright dot wanders inside the window for 20 s; every click on it scores, the pet lunges after it.
+  // The dot is drawn on the stage canvas so the hit test (which decides click-through) counts it as solid.
+  function startCatchGame() {
+    if (!engine || catchGame || (care && care.s.sleeping)) return;
+    const G = T.growth;
+    catchGame = { t0: performance.now(), score: 0, x: PAD_SIDE + dispW * 0.5, y: PAD_TOP + dispH * 0.5, tx: 0, ty: 0, nextMove: 0, hitAt: 0, r: Math.max(14, dispW * 0.07) };
+    pickDot(); say(G.game.start); sound('pop', 0.4); engine.showExpression('surprised', 1500);
+    if (milestones) milestones.record('game');
+  }
+  function pickDot() {
+    const g = catchGame; g.tx = PAD_SIDE + 20 + Math.random() * (dispW - 40); g.ty = PAD_TOP + 20 + Math.random() * (dispH * 0.95 - 40); g.nextMove = performance.now() + 700 + Math.random() * 900;
+  }
+  function stepCatchGame() {
+    const g = catchGame; if (!g) return; const now = performance.now(); const el = (now - g.t0) / 1000;
+    if (el >= 20) { endCatchGame(); return; }
+    if (now > g.nextMove) pickDot();
+    const k = 1 - Math.exp(-0.12); g.x += (g.tx - g.x) * k; g.y += (g.ty - g.y) * k;
+    // the pet keeps its eyes on the dot
+    try { engine.setLookVector(g.x - (PAD_SIDE + dispW / 2), g.y - (PAD_TOP + dispH * 0.25)); } catch (_) {}
+  }
+  function drawCatchGame() {
+    const g = catchGame; if (!g) return; const now = performance.now(); const el = (now - g.t0) / 1000;
+    const pulse = 1 + 0.12 * Math.sin(now / 90); const r = g.r * pulse; const hit = now - g.hitAt < 220;
+    ctx.save();
+    const grd = ctx.createRadialGradient(g.x, g.y, 0, g.x, g.y, r * 1.8); grd.addColorStop(0, hit ? 'rgba(255,255,255,1)' : 'rgba(255,240,150,0.95)'); grd.addColorStop(0.5, 'rgba(255,200,60,0.6)'); grd.addColorStop(1, 'rgba(255,200,60,0)');
+    ctx.fillStyle = grd; ctx.beginPath(); ctx.arc(g.x, g.y, r * 1.8, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = hit ? '#fff' : '#ffe27a'; ctx.beginPath(); ctx.arc(g.x, g.y, r * 0.55, 0, Math.PI * 2); ctx.fill();
+    // score + time, top-right
+    ctx.font = '600 13px system-ui, sans-serif'; ctx.textAlign = 'right'; ctx.fillStyle = 'rgba(40,38,36,0.85)';
+    const label = `${g.score}  ·  ${Math.max(0, Math.ceil(20 - el))}s`; const w = ctx.measureText(label).width + 14; const bx = PAD_SIDE + dispW - 4;
+    ctx.fillStyle = 'rgba(255,252,247,0.92)'; ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(bx - w, PAD_TOP + 4, w, 20, 10); else ctx.rect(bx - w, PAD_TOP + 4, w, 20); ctx.fill();
+    ctx.fillStyle = '#2c2b29'; ctx.fillText(label, bx - 7, PAD_TOP + 18);
+    ctx.restore();
+  }
+  function catchHit(x, y) {
+    const g = catchGame; if (!g) return false;
+    if (Math.hypot(x - g.x, y - g.y) > g.r * 1.6) return false;
+    g.score += 1; g.hitAt = performance.now(); pickDot(); sound('pop', 0.35); reaction('happy', true, 0.3);
+    engine.play(pet.manifest.actions.pounce ? 'pounce' : 'jump', PET_PRIORITY.user);
+    return true;
+  }
+  function endCatchGame() {
+    const g = catchGame; catchGame = null; if (!g) return; const G = T.growth;
+    const best = growth ? (growth.st.growth.best.catch || 0) : 0;
+    if (growth) growth.record('game', g.score);
+    say(G.game.over(g.score, best), false); engine.showExpression(g.score > 0 ? 'happy' : 'sad', 2500); sound(g.score >= best && g.score > 0 ? 'fanfare' : 'chime', 0.4);
+    if (g.score >= 15 && !pet.manifest.actions.pounce && growth && !growth.st.growth.pounceAsked) { growth.st.growth.pounceAsked = true; setTimeout(() => say(G.game.wantPounce, true), 4000); }
   }
 
   function greet() {
@@ -774,6 +885,8 @@
     const scaleItems = await Promise.all([0.5, 0.75, 1, 1.5, 2].map(s => CheckMenuItem.new({ text: Math.round(s * 100) + '%', checked: Math.abs(settings.scale - s) < 0.01, action: async () => { settings.scale = s; await saveSettings(); await applyScale(); } })));
     const items = [
       await MenuItem.new({ text: T.menu.care(pet.name), action: openCare }),
+      await MenuItem.new({ text: T.growth.menu, action: openNotebook }),
+      await MenuItem.new({ text: T.growth.play, action: startCatchGame }),
       await Submenu.new({ text: T.menu.actions, items: actionItems.length ? actionItems : [await MenuItem.new({ text: T.teach.empty, action: teachExport })] }),
       await Submenu.new({ text: T.menu.size, items: scaleItems }),
       await CheckMenuItem.new({ text: T.menu.mute, checked: settings.muted, action: async () => { settings.muted = !settings.muted; await saveSettings(); } }),
@@ -783,7 +896,6 @@
       await MenuItem.new({ text: T.menu2.come, action: () => beh && beh.comeHere() }),
       await MenuItem.new({ text: T.menu2.hide, action: () => beh && beh.peek() }),
       await CheckMenuItem.new({ text: T.menu2.perch, checked: !!(beh && beh.mode === 'perch'), action: () => beh && beh.setPerch(beh.mode !== 'perch') }),
-      ...(await summonItems()),
       ...(await wardrobeItems()),
       await PredefinedMenuItem.new({ item: 'Separator' }),
       await MenuItem.new({ text: T.menu.import, action: importPet }),
@@ -806,18 +918,6 @@
     const entries = await Promise.all(['default', ...names].map(id => CheckMenuItem.new({ text: id === 'default' ? T.wardrobe.default : label(id), checked: currentOutfit === id,
       action: async () => { care.s.outfit = id === 'default' ? null : id; await care.host.save(care.s); await loadPet(pet); } })));
     return [await Submenu.new({ text: T.wardrobe.menu, items: entries })];
-  }
-  async function summonItems() {
-    const { MenuItem, Submenu } = window.__TAURI__.menu;
-    pets = await invoke('list_pets');
-    const others = pets.filter(p => p.id !== pet.id && !Object.values(otherPets).some(o => o.id === p.id));
-    const items = await Promise.all(others.map(p => MenuItem.new({ text: p.name, action: () => { const r = winRect, m = monRect; let x = null, y = null;
-          if (r) { x = r.x + r.w + 24; y = r.y; if (m && x + r.w > m.x + m.w) x = Math.max(m.x, r.x - r.w - 24); }   // beside the caller, never on top of it
-          invoke('open_pet_window', { id: p.id, x, y }).catch(e => toast(String(e))); } })));
-    const out = [];
-    if (items.length) out.push(await Submenu.new({ text: T.menu2.summon, items }));
-    if (!isMain) out.push(await MenuItem.new({ text: T.menu2.release, action: () => win.close() }));
-    return out;
   }
   async function importPet(path) {
     try {
@@ -867,15 +967,37 @@
   // (the old "设置" window is gone in 0.8.12: its only control, display size, lives in the right-click 大小 submenu)
   listen('tray', async (e) => {
     const id = e.payload;
-    if (id === 'toggle') toggleHidden(); else if (id === 'import') importPet(); else if (id === 'switch') switchPet(); else if (id === 'export') exportPet();
+    if (id === 'toggle') toggleHidden(); else if (id === 'notebook') openNotebook(); else if (id === 'typing') enableTyping(); else if (id === 'import') importPet(); else if (id === 'switch') switchPet(); else if (id === 'export') exportPet();
     else if (id === 'diagnose') { const path = await saveDebugLog(); toast(`${win.label} ${pet ? pet.id : ''} · poll ok ${pollDiag.ok} · 失败 ${JSON.stringify(pollDiag.fails)} · ${pollDiag.lastErr || '无错误'} · 穿透=${lastHitVisible === null ? '?' : !lastHitVisible} · 日志 ${path}`, 9000); }
     else if (id === 'recover') { lastHitVisible = true; lastIgnoreAt = 0; try { await win.setIgnoreCursorEvents(false); } catch (_) {} hidden = false; try { await win.show(); } catch (_) {} }
   });
+  listen('panel-cmd', (e) => { const c = (e.payload || {}).cmd; if (c === 'game') startCatchGame(); else if (c === 'care') openCare(); });
   listen('modifier-state', (e) => { ctrlHeld = !!(e.payload && e.payload.ctrl); if (!ctrlHeld) { whipPrev = null; whipMarks = []; whipTrail = []; whipFlash = null; drawWhip(); } });
-  listen('user-input', (e) => { if (!engine) return; const p = e.payload || {}; engine.lastInput = performance.now() / 1000; if (beh) beh.onTyping(p.keys || 0); if (p.keys && garden) garden.onTypingSecond(p.keys); });
+  // 0.8.16: the user clicking around the desktop (not on the pet): a glance that way, a startle on a click burst
+  listen('mouse-press', async (e) => {
+    if (!engine || !beh || hidden) return; const p = e.payload || {};
+    try { const sf = await win.scaleFactor(); const x = p.x / sf, y = p.y / sf; if (winRect && x >= winRect.x && x <= winRect.x + winRect.w && y >= winRect.y && y <= winRect.y + winRect.h) return; beh.onDesktopClick(p.button, x, y); } catch (_) {}
+  });
+  listen('user-input', (e) => {
+    if (!engine) return; const p = e.payload || {}; engine.lastInput = performance.now() / 1000;
+    if (beh) beh.onTyping(p.keys || 0); if (p.keys && garden) garden.onTypingSecond(p.keys);
+    if (growth) {                                                          // 0.9.0: typing counts toward a wish; coming back after a while may bring a find
+      const nowS = Date.now() / 1000; const gap = nowS - (lastInputSec || nowS); lastInputSec = nowS;
+      if (p.keys) growth.record('type', p.keys); else growth.record('input');
+      if (gap >= GROWTH_DEFS.FIND_MIN_ABSENT) { const f = growth.onReturn(gap); if (f) showFind(f); }
+    }
+  });
   // (the typing sound itself comes from Behaviors.onTyping -> host.react('typing'): one soft note per nod, never while sleeping)
-  listen('pet-rect', (e) => { const p = e.payload; if (!p || p.label === win.label || !beh) return; if (!otherPets[p.label]) lastIgnoreAt = 0; otherPets[p.label] = p; beh.onOtherPet(p.id, p.rect, p.name); });
-  rectTimer = setInterval(() => { if (pet && winRect) window.__TAURI__.event.emit('pet-rect', { label: win.label, id: pet.id, name: pet.name, rect: winRect }); }, 800);
+  // peers (0.8.16): publish our rect, read the other Kapi processes' rects; greet when one walks into us
+  rectTimer = setInterval(async () => {
+    if (!pet || !winRect) return;
+    try {
+      const list = await invoke('peer_pets', { id: pet.id, name: pet.name, rect: winRect });
+      const seen = {};
+      for (const p of list) { seen[p.key] = 1; peers[p.key] = p; if (beh) beh.onOtherPet(p.key, p.rect, p.name); }
+      for (const k of Object.keys(peers)) if (!seen[k]) delete peers[k];
+    } catch (_) {}
+  }, 1000);
   batteryTimer = setInterval(async () => { if (!beh) return; try { beh.onBattery(await invoke('battery_status')); } catch (_) {} }, 60000);
   // Foreground-window tracking. The pet itself becomes the foreground window the moment the user right-clicks it, so
   // "sit on the window" must use the last *other* window the user was in (remembered here at all times), not the
@@ -898,10 +1020,20 @@
     } catch (_) { if (beh.mode === 'perch') beh.perchNoWindow(); }
   }, 1000);
   listen('settings-changed', async () => { await loadSettings(); await win.setAlwaysOnTop(!!settings.alwaysOnTop); if (pet) await applyScale(); });
-  win.onDragDropEvent(async (e) => { if (e.payload.type === 'drop' && e.payload.paths?.length) await importPet(e.payload.paths[0]); });
+  // files dragged over / onto the pet (0.8.16): a .petpack is imported; anything else is "a gift" it sniffs at
+  let giftAt = 0;
+  win.onDragDropEvent(async (e) => {
+    const p = e.payload || {};
+    if (p.type === 'enter' && engine && !engine.sleeping) { engine.showExpression('surprised', 1500); if (performance.now() - giftAt > 8000) { giftAt = performance.now(); reaction('surprise', true, 0.35); } return; }
+    if (p.type !== 'drop' || !p.paths?.length) return;
+    if (/\.petpack$/i.test(p.paths[0])) { await importPet(p.paths[0]); return; }
+    if (!engine) return;
+    engine.showExpression('happy', 2500); engine.play('jump', PET_PRIORITY.user); if (milestones) milestones.record('gift'); if (growth) growth.record('gift');
+    react('happy', 'gift', 0.8, T.beh.gift);
+  });
 
   // ---------- boot ----------
-  try { await win.setIgnoreCursorEvents(false); } catch (_) {}      // known starting state for every pet window (main and summoned)
+  try { await win.setIgnoreCursorEvents(false); } catch (_) {}      // known starting state for the pet window
   await loadSettings();
   await win.setAlwaysOnTop(!!settings.alwaysOnTop);
   pets = await invoke('list_pets');
@@ -920,16 +1052,9 @@
         await saveSettings();
       }
     } catch (_) {}
-    const chosen = (wantedPetId && pets.find(p => p.id === wantedPetId)) || bundlePick || pets.find(p => p.id === settings.activePetId) || pets[0];
+    const chosen = bundlePick || pets.find(p => p.id === settings.activePetId) || pets[0];
     try { await loadPet(chosen); } catch (e) { toast(String(e), 6000); }
-    if (!engine) { try { await win.setIgnoreCursorEvents(true); } catch (_) {} }   // a window with no pet must never block clicks for the others
-    if (!isMain) {
-      await refreshRects();
-      const q = new URLSearchParams(location.search); const qx = parseFloat(q.get('x')), qy = parseFloat(q.get('y'));
-      if (Number.isFinite(qx) && Number.isFinite(qy)) await win.setPosition(new LogicalPosition(qx, qy));
-      else if (monRect && winRect) await win.setPosition(new LogicalPosition(monRect.x + monRect.w * 0.3 + Math.random() * 200, winRect.y));
-      await refreshRects();
-    }
+    if (!engine) { try { await win.setIgnoreCursorEvents(true); } catch (_) {} }   // a window with no pet must never block clicks
   }
   render();
 })();
