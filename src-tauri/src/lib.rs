@@ -3,6 +3,7 @@
 
 use serde::Serialize;
 use std::{fs, io::Read, path::PathBuf};
+use fs4::fs_std::FileExt;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
@@ -108,10 +109,111 @@ fn bundle_info() -> Option<serde_json::Value> {
     None
 }
 
+/// The folder this Kapi lives in (beside Kapi.exe; beside Kapi.app on macOS). One pet per folder (0.8.16): the lock,
+/// the settings and the default pet are all per folder, so two copies in two folders are two independent pets.
+fn exe_folder() -> PathBuf {
+    let exe = std::env::current_exe().unwrap_or_default();
+    let dir = exe.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    #[cfg(target_os = "macos")]
+    {
+        if dir.ends_with("Contents/MacOS") {
+            if let Some(app_dir) = dir.parent().and_then(|p| p.parent()).and_then(|p| p.parent()) { return app_dir.to_path_buf(); }
+        }
+    }
+    dir
+}
+fn folder_key() -> String {
+    // short stable hash of the folder path (no external crate)
+    let s = exe_folder().to_string_lossy().to_lowercase();
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.bytes() { h ^= b as u64; h = h.wrapping_mul(0x100000001b3); }
+    format!("{:016x}", h)
+}
+
 #[tauri::command]
 fn settings_path(app: AppHandle) -> Result<String, String> {
     let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    Ok(data.join("settings.json").to_string_lossy().to_string())
+    let per = data.join(format!("settings-{}.json", folder_key()));
+    if !per.exists() {
+        // first run of 0.8.16 in this folder: inherit the old shared settings so nothing the user set is lost
+        let old = data.join("settings.json");
+        if old.exists() { let _ = fs::create_dir_all(&data); let _ = fs::copy(&old, &per); }
+    }
+    Ok(per.to_string_lossy().to_string())
+}
+
+/// Peers (0.8.16): every running Kapi writes its pet's rect to <temp>/kapi-peers/<folderkey>.json about once a second
+/// and reads the others', so two pets in two processes still greet each other. Stale files (>4 s) are ignored.
+#[derive(Serialize, serde::Deserialize, Clone)]
+pub struct Peer { pub key: String, pub id: String, pub name: String, pub rect: serde_json::Value, pub t: u64 }
+fn peers_dir() -> PathBuf { std::env::temp_dir().join("kapi-peers") }
+#[tauri::command]
+fn peer_pets(id: String, name: String, rect: serde_json::Value) -> Vec<Peer> {
+    let dir = peers_dir(); let _ = fs::create_dir_all(&dir);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let me = Peer { key: folder_key(), id, name, rect, t: now };
+    let _ = fs::write(dir.join(format!("{}.json", me.key)), serde_json::to_vec(&me).unwrap_or_default());
+    let mut out = Vec::new();
+    if let Ok(rd) = fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            if let Ok(txt) = fs::read_to_string(e.path()) {
+                if let Ok(p) = serde_json::from_str::<Peer>(&txt) {
+                    if p.key == me.key { continue; }
+                    if now.saturating_sub(p.t) > 4 { let _ = fs::remove_file(e.path()); continue; }
+                    out.push(p);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The notebook window (0.9.0): a normal small window showing what the pet knows, today's wishes, finds, diary, chapters.
+/// It reads the pet folder itself (?dir=…) and refreshes from state.json; one per app, re-shown if already open.
+#[tauri::command]
+fn open_panel_window(app: AppHandle, pet_dir: String, lang: String) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("notebook") { let _ = w.show(); let _ = w.set_focus(); return Ok(()); }
+    let q = format!("panel.html?dir={}&lang={}", urlencode(&pet_dir), urlencode(&lang));
+    tauri::WebviewWindowBuilder::new(&app, "notebook", tauri::WebviewUrl::App(q.into()))
+        .title("Kapi").inner_size(560.0, 640.0).min_inner_size(420.0, 480.0).resizable(true).decorations(true).always_on_top(false)
+        .build().map_err(|e| e.to_string())?;
+    Ok(())
+}
+fn urlencode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        match b { b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char), _ => out.push_str(&format!("%{:02X}", b)) }
+    }
+    out
+}
+
+/// One Kapi per folder (0.8.16): an exclusive lock on <folder>/.kapi.lock held for the whole run. A second launch
+/// from the same folder cannot take it: it touches <folder>/.kapi.show so the running one shows itself, and exits.
+/// A Kapi in another folder has its own lock and runs independently — that is how two pets share a desktop.
+fn take_folder_lock() -> bool {
+    let dir = exe_folder();
+    let path = dir.join(".kapi.lock");
+    let file = match fs::OpenOptions::new().read(true).write(true).create(true).open(&path) {
+        Ok(f) => f,
+        Err(_) => return true,     // read-only folder: cannot lock, run anyway
+    };
+    match file.try_lock_exclusive() {
+        Ok(true) => { std::mem::forget(file); true }                 // fs4 0.13: Ok(false) = someone else holds it
+        _ => { let _ = fs::write(dir.join(".kapi.show"), b"1"); false }
+    }
+}
+fn spawn_show_watcher(app: AppHandle) {
+    std::thread::spawn(move || {
+        let flag = exe_folder().join(".kapi.show");
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+            if flag.exists() {
+                let _ = fs::remove_file(&flag);
+                if let Some(w) = app.get_webview_window("pet") { let _ = w.show(); let _ = w.set_ignore_cursor_events(false); let _ = w.set_focus(); }
+                let _ = app.emit("tray", "recover");
+            }
+        }
+    });
 }
 
 /// Unzip a .petpack (zip whose top-level folder is the pet id) into app_data/pets/<id>.
@@ -224,32 +326,68 @@ fn battery_status() -> Option<BatteryInfo> {
     Some(BatteryInfo { percent, charging })
 }
 
-/// Open another pet in its own window (label pet-<id>). The page reads ?pet=<id>.
+/// Accessibility (macOS only, 0.9.1). The global input watcher needs the Accessibility permission on macOS, and
+/// `device_query::DeviceState::new()` both PROMPTS for it and panics without it. So on macOS the watcher starts only
+/// when the permission is already granted (checked WITHOUT a prompt), a background check every 5 s starts it the
+/// moment the user grants it, and the prompt itself is shown only from the tray item「启用打字互动」. Everything
+/// else about the pet works without the permission; typing reactions, the flower and the Ctrl whip simply wait.
+static INPUT_WATCHER_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(target_os = "macos")]
+fn input_permission_granted() -> bool { macos_accessibility_client::accessibility::application_is_trusted() }
+#[cfg(not(target_os = "macos"))]
+fn input_permission_granted() -> bool { true }
+
+/// Start the watcher if allowed; never prompts. Returns whether it is (now) running.
+fn start_input_watcher_if_allowed(app: &AppHandle) -> bool {
+    if INPUT_WATCHER_RUNNING.load(std::sync::atomic::Ordering::SeqCst) { return true; }
+    if !input_permission_granted() { let _ = app.emit("input-watcher", serde_json::json!({ "active": false, "reason": "accessibility" })); return false; }
+    INPUT_WATCHER_RUNNING.store(true, std::sync::atomic::Ordering::SeqCst);
+    spawn_input_watcher(app.clone());
+    let _ = app.emit("input-watcher", serde_json::json!({ "active": true }));
+    true
+}
+/// macOS: keep checking so a permission granted in System Settings takes effect without a restart.
+fn spawn_permission_poll(app: AppHandle) {
+    if input_permission_granted() { return; }
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        if start_input_watcher_if_allowed(&app) { break; }
+    });
+}
+/// Tray「启用打字互动」: show the system prompt once (this also lists Kapi under Accessibility) and open the pane.
 #[tauri::command]
-fn open_pet_window(app: AppHandle, id: String, x: Option<f64>, y: Option<f64>) -> Result<(), String> {
-    let label = format!("pet-{}", id.replace(|c: char| !c.is_ascii_alphanumeric(), "-"));
-    if let Some(w) = app.get_webview_window(&label) {
-        let _ = w.show(); return Ok(());
+fn request_input_permission(app: AppHandle) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let granted = macos_accessibility_client::accessibility::application_is_trusted_with_prompt();
+        if !granted {
+            let _ = std::process::Command::new("open").arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility").spawn();
+            spawn_permission_poll(app.clone());
+        }
+        return start_input_watcher_if_allowed(&app) || granted;
     }
-    // the caller passes where it wants the new pet (next to itself, never on top of itself); the page reads ?x=&y=
-    let pos = match (x, y) { (Some(x), Some(y)) => format!("&x={}&y={}", x.round(), y.round()), _ => String::new() };
-    let url = tauri::WebviewUrl::App(format!("index.html?pet={id}{pos}").into());
-    tauri::WebviewWindowBuilder::new(&app, &label, url)
-        .title("Kapi").inner_size(360.0, 480.0).transparent(true).decorations(false).shadow(false)
-        .always_on_top(true).skip_taskbar(true).resizable(false).accept_first_mouse(true).visible_on_all_workspaces(true)
-        .build().map_err(|e| e.to_string())?;
-    Ok(())
+    #[cfg(not(target_os = "macos"))]
+    { start_input_watcher_if_allowed(&app) }
+}
+#[tauri::command]
+fn input_watcher_state() -> serde_json::Value {
+    serde_json::json!({ "active": INPUT_WATCHER_RUNNING.load(std::sync::atomic::Ordering::SeqCst), "granted": input_permission_granted(), "macos": cfg!(target_os = "macos") })
 }
 
 /// Global input watcher: counts key presses without reading text and reports Ctrl transitions for pet gestures.
+/// Only ever started through start_input_watcher_if_allowed (one thread, permission already granted).
 fn spawn_input_watcher(app: AppHandle) {
     std::thread::spawn(move || {
         use device_query::{DeviceQuery, DeviceState};
+        #[cfg(target_os = "macos")]
+        let dev = match DeviceState::checked_new() { Some(d) => d, None => { INPUT_WATCHER_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst); return; } };
+        #[cfg(not(target_os = "macos"))]
         let dev = DeviceState::new();
         let mut last_keys: Vec<device_query::Keycode> = Vec::new();
         let mut last_mouse = (0i32, 0i32);
         let mut presses = 0u32;
         let mut last_ctrl = false;
+        let (mut last_left, mut last_right) = (false, false);
         let mut window_start = std::time::Instant::now();
         loop {
             std::thread::sleep(std::time::Duration::from_millis(80));
@@ -265,9 +403,17 @@ fn spawn_input_watcher(app: AppHandle) {
                 }
             }
             last_keys = keys;
-            let m = dev.get_mouse().coords;
+            let mouse = dev.get_mouse();
+            let m = mouse.coords;
             let mouse_moved = m != last_mouse;
             last_mouse = m;
+            // 0.8.16 mouse events (no content, only "a button went down where"): left / right presses with their
+            // screen position, plus a fast-move flag, so the pet can glance at what the user is doing on the desktop
+            let left = mouse.button_pressed.get(1).copied().unwrap_or(false);
+            let right = mouse.button_pressed.get(2).copied().unwrap_or(false);
+            if left && !last_left { let _ = app.emit("mouse-press", serde_json::json!({ "button": "left", "x": m.0, "y": m.1 })); }
+            if right && !last_right { let _ = app.emit("mouse-press", serde_json::json!({ "button": "right", "x": m.0, "y": m.1 })); }
+            last_left = left; last_right = right;
             if window_start.elapsed().as_millis() >= 1000 {
                 if presses > 0 || mouse_moved {
                     let _ = app.emit("user-input", serde_json::json!({ "keys": presses, "mouse": mouse_moved }));
@@ -281,33 +427,28 @@ fn spawn_input_watcher(app: AppHandle) {
 
 
 pub fn run() {
+    if !take_folder_lock() { return; }     // this folder's Kapi is already running: it has been asked to show itself
     tauri::Builder::default()
-        // one Kapi at a time (0.8.12): a second launch (double-clicking the exe again, or the old process never having
-        // quit) used to stack a second pet window — and a second tray icon — on top of the first; clicks then went to
-        // whichever window was on top while the other kept animating. Now the second launch just shows the first.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            for (label, w) in app.webview_windows() {
-                if label == "pet" { let _ = w.show(); let _ = w.set_ignore_cursor_events(false); let _ = w.set_focus(); }
-            }
-        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             list_pets, read_text, read_file_b64, write_text, settings_path, bundle_info, import_pet, export_pet,
-            active_window, battery_status, open_pet_window
+            active_window, battery_status, peer_pets, open_panel_window, request_input_permission, input_watcher_state
         ])
         .setup(|app| {
             let show = MenuItem::with_id(app, "toggle", "显示 / 隐藏", true, None::<&str>)?;
             let import = MenuItem::with_id(app, "import", "导入宠物包 (.petpack)…", true, None::<&str>)?;
             let switch = MenuItem::with_id(app, "switch", "切换宠物", true, None::<&str>)?;
             let export = MenuItem::with_id(app, "export", "导出当前宠物包…", true, None::<&str>)?;
+            let notebook = MenuItem::with_id(app, "notebook", "它的小本子", true, None::<&str>)?;
+            #[cfg(target_os = "macos")]
+            let typing = MenuItem::with_id(app, "typing", "启用打字互动（需要辅助功能权限）", true, None::<&str>)?;
             let recover = MenuItem::with_id(app, "recover", "恢复交互（点不动时）", true, None::<&str>)?;
-            let close_others = MenuItem::with_id(app, "close-others", "收回其他宠物", true, None::<&str>)?;
             let diagnose = MenuItem::with_id(app, "diagnose", "诊断（出问题时点这个，再把日志发来）", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
-                &[&show, &import, &switch, &export, &PredefinedMenuItem::separator(app)?, &recover, &close_others, &diagnose, &PredefinedMenuItem::separator(app)?, &quit],
+                &[&show, &notebook, #[cfg(target_os = "macos")] &typing, &import, &switch, &export, &PredefinedMenuItem::separator(app)?, &recover, &diagnose, &PredefinedMenuItem::separator(app)?, &quit],
             )?;
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
@@ -318,17 +459,9 @@ pub fn run() {
                     let id = event.id().as_ref().to_string();
                     if id == "quit" {
                         app.exit(0);
-                    } else if id == "close-others" {
-                        // every extra pet window (label pet-<id>) goes; the main "pet" window stays
-                        for (label, w) in app.webview_windows() {
-                            if label.starts_with("pet-") { let _ = w.close(); }
-                        }
-                        let _ = app.emit("tray", "recover");
                     } else if id == "recover" {
-                        // belt and braces from the native side too: no pet window may stay click-through
-                        for (label, w) in app.webview_windows() {
-                            if label == "pet" || label.starts_with("pet-") { let _ = w.set_ignore_cursor_events(false); }
-                        }
+                        // belt and braces from the native side too: the pet window may never stay click-through
+                        if let Some(w) = app.get_webview_window("pet") { let _ = w.set_ignore_cursor_events(false); }
                         let _ = app.emit("tray", id);
                     } else {
                         let _ = app.emit("tray", id);
@@ -338,7 +471,9 @@ pub fn run() {
             if let Some(w) = app.get_webview_window("pet") {
                 let _ = w.set_visible_on_all_workspaces(true);
             }
-            spawn_input_watcher(app.handle().clone());
+            start_input_watcher_if_allowed(app.handle());      // never prompts; macOS without the permission just runs without typing reactions
+            spawn_permission_poll(app.handle().clone());
+            spawn_show_watcher(app.handle().clone());
             Ok(())
         })
         .run(tauri::generate_context!())

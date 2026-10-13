@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Kapi windows",
-  "windows": ["pet", "pet-*", "settings"],
+  "windows": ["pet", "notebook"],
   "permissions": [
     "core:default",
     "core:window:allow-set-ignore-cursor-events",
