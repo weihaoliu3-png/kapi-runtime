@@ -16,9 +16,18 @@ npm run dev           # 开发运行
 npm run build         # 产出 src-tauri/target/release/bundle/…
 ```
 
-或者直接推一个 tag（`v0.2.0`）到 GitHub，`.github/workflows/build.yml` 会在 Mac / Windows 机器上各编一份，产物 `Kapi-mac.zip`、`Kapi-win.zip` 在 Actions 的 Artifacts 里下载，**原样放进 skill 的 `assets/runtime/`**，并把版本号写进 `assets/runtime/VERSION`。
+或者直接推一个 tag（`v0.2.0`）到 GitHub，`.github/workflows/build.yml` 会在 Mac / Windows 机器上各编一份，产物 `Kapi-mac.zip`、`Kapi-win.zip` 自动附在同名的 GitHub Release 上（Actions 的 Artifacts 里也有）；手动下载后**原样放进 skill 的 `assets/runtime/`**（不要解开重压），并把版本号写进 `assets/runtime/VERSION`。
 
 不签名（已定案）：Mac 首次打开要在"系统设置 → 隐私与安全性"里点"仍要打开"；Windows 会弹 SmartScreen。skill 的交付话术里已写清楚。
+
+## v0.9.3 新增：规则引擎（宠物包自己描述行为）、发布自动化
+
+- **小本子白屏 + 桌宠永久失去鼠标（Windows，0.9.2 仍复现，P0）**：根因是"运行中创建 WebView2 窗口"这件事本身——0.9.1 在同步命令里建（WebView2 在 IPC 处理线程上建窗死锁），0.9.2 改成 `run_on_main_thread` 后仍是在事件循环的回调里建，用户机器上照样白屏、`aux-window` 事件发不出来，而 1.5 秒恢复点击的定时器排在 `invoke` 之后，IPC 一卡它也没跑。现在：**运行中不再创建任何窗口**。小本子在 `tauri.conf.json` 里和桌宠窗口一起声明（隐藏启动，走同一条已验证能用的启动路径）；`open_panel_window` 变成 `async` 命令（工作线程，永远不占主线程 IPC），只做"告诉页面是哪只（`notebook-open` 事件）→ show → focus"；关闭只是隐藏，整个运行期复用。页面侧：1.5 秒恢复交互和 8 秒超时都在 `invoke` **之前**就排好（独立于命令是否返回），`try / catch / finally` 包住；超时或页面报错 → 收起小本子、恢复桌宠、toast 说明。日志（`kapi-debug.log`）：`notebook-click`（页面 + 原生各一条）、`window-shown`（原生，不经过页面 IPC）、`dom-ready`、`window-loaded` / `load-error`、`timeout`、`interaction-restored <原因>`。万一窗口缺失，才从工作线程按文档推荐的方式建（`window-created`）。
+- **规则引擎 `src/rules.js`**：`pet.json.rules` 是一组"什么时候 → 做什么"的声明（`when` / `match` / `if` / `chance` / `cooldownSec` / `do`），运行器照着执行。用户的创意——"打开 Excel 就打哈欠""18:00 举个牌子""拖张图片给它就跳舞""连点 10 下就生气"——现在是**宠物包里的数据**，skill 改一下 pet.json 就生效，不需要改运行器、不需要重新编译。事件 27 种（click / clickMany / stroke / dragStart / dragEnd / landed / typing / typingFast / typingLong / idle / time / app / fileDrop / desktopClick / lowBattery / hungry / thirsty / tired / lonely / levelUp / wishDone / sulk / greet / wake / sleep / hourly / start），步骤 14 种（play / say / expr / effect / sound / react / look / walk / hide / come / mood / flag / wait / toast），顺序执行、`wait` 可以隔开。未知事件 / 步骤被忽略（老运行器只是少做），skill 的 `validate_pet_package.py check_rules` 在交付前拦住拼错的。规则状态（上次触发、flags）存在 `state.json.rules`。默认冷却 60 秒（`time` / `app` 3600，`hourly` 3000，`idle` 600，`start` 每次启动一次）。`app` 事件由已有的前台窗口轮询触发（只在切换到匹配的应用时触发一次）。
+- **三层边界**（给 skill 的判断口径）：① 能用现有动作 / 台词 / 事件组合出来的 → 写 `rules`，不编译；② 需要新动作 → `teach_action.py` 生成帧，还是不编译；③ 需要新事件 / 新步骤（比如"听到麦克风声音"）→ 才是运行器改动，走 GitHub。
+- **发布自动化**：`build.yml` 在 tag 构建时自动创建 GitHub Release 并附上 `Kapi-mac.zip` / `Kapi-win.zip`；从 Release 页面手动下载、原样放进 skill 的 `assets/runtime/`（`package_pet.py` 打包时校验 Mac 可执行位、Windows 根目录 `Kapi.exe`）。
+- 清理：去掉早已无用的「设置」窗口文案（`i18n.settings`）。
+- 测试：`test/rules.test.mjs`（匹配 / 冷却 / 条件 / 步骤顺序 / 校验）。
 
 ## v0.9.2 修复 + 新增：小本子白屏、真走路、打理、去掉坐窗口、来源诊断
 

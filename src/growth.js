@@ -143,7 +143,7 @@
       g.finds.push(f); g.findsToday += 1; g.dayStats.find = (g.dayStats.find || 0) + 1; this._log('find', pick.id);
       // a full page of different finds -> an outfit ticket (only the assistant can turn it into clothes)
       const distinct = new Set(g.finds.map(x => x.id)).size; const pages = Math.floor(distinct / FIND_PAGE);
-      if (pages > (g.findPages || 0)) { g.findPages = pages; f.page = true; if (this.h.care) { this.h.care.s.tickets.outfit = (this.h.care.s.tickets.outfit || 0) + 1; this.h.care.s.ticketLog = [...(this.h.care.s.ticketLog || []), { type: 'outfit', at: Date.now(), from: 'finds' }]; } }
+      if (pages > (g.findPages || 0)) { g.findPages = pages; f.page = true; if (this.h.care) { this.h.care.s.tickets.outfit = (this.h.care.s.tickets.outfit || 0) + 1; this.h.care.s.ticketLog = [...(this.h.care.s.ticketLog || []), { id: `OT-F${pages}-${Math.random().toString(36).slice(2, 8)}`, type: 'outfit', level: 0, issuedAt: Date.now(), usedAt: null, note: '', from: 'finds' }]; } }
       this.h.save();
       return f;
     }

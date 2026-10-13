@@ -49,10 +49,13 @@
   <script src="growth.js"></script>
   <script>
   (async () => {
-    const q = new URLSearchParams(location.search); const dir = q.get('dir'); const lang = q.get('lang') || 'zh-CN';
-    const T = I18N.pick(lang); const G = T.growth; const P = G.panel;
-    const invoke = window.__TAURI__.core.invoke; const emit = window.__TAURI__.event.emit;
-    const sep = dir.includes('\\') ? '\\' : '/'; const join = (a, b) => a.replace(/[\\/]+$/, '') + sep + b;
+    // 0.9.3: this window is created hidden at start-up and reused; the pet window tells it which pet via the
+    // `notebook-open` event (a ?dir= query still works for tests / old callers).
+    const q = new URLSearchParams(location.search); let dir = q.get('dir'); let lang = q.get('lang') || 'zh-CN';
+    let T = I18N.pick(lang), G = T.growth, P = G.panel;
+    const invoke = window.__TAURI__.core.invoke; const emit = window.__TAURI__.event.emit; const listen = window.__TAURI__.event.listen;
+    let sep = '/'; let join = (a, b) => a.replace(/[\\/]+$/, '') + sep + b;
+    function setDir(d, l) { dir = d; lang = l || lang; T = I18N.pick(lang); G = T.growth; P = G.panel; sep = dir.includes('\\') ? '\\' : '/'; }
     let tab = 'skills', pet = null, persona = null, state = null;
     const esc = (x) => String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     async function load() {
@@ -124,9 +127,17 @@
       body.querySelectorAll('button[data-cmd]').forEach(b => b.onclick = () => emit('panel-cmd', { cmd: b.dataset.cmd }));
       document.title = `${pet.name || 'Kapi'} · ${P.title}`;
     }
-    window.__panel = { setTab: (t) => { tab = t; render(); }, body: () => document.getElementById('body').innerHTML };   // tests
-    if (await load()) render();
-    setInterval(async () => { if (await load()) render(); }, 2000);
+    window.__panel = { setTab: (t) => { tab = t; render(); }, body: () => document.getElementById('body').innerHTML, open: (d, l) => open(d, l) };   // tests
+    async function open(d, l) {
+      setDir(d, l);
+      const ok = await load();
+      if (ok) render();
+      try { await emit('notebook-loaded', { ok, error: ok ? '' : document.getElementById('body').textContent, dir }); } catch (_) {}
+    }
+    try { await listen('notebook-open', (e) => { const p = e.payload || {}; if (p.dir) open(p.dir, p.lang); }); } catch (_) {}
+    try { await emit('notebook-ready', { dir: dir || '' }); } catch (_) {}
+    if (dir) { setDir(dir, lang); await open(dir, lang); } else document.getElementById('body').textContent = '…';
+    setInterval(async () => { if (dir && await load()) render(); }, 2000);
   })();
   </script>
 </body>

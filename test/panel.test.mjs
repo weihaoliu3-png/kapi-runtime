@@ -12,7 +12,8 @@ const pet = { name: '小云', actions: { idle: { type: 'procedural' }, wave: { t
 const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();   // the fixture must be 'today' or the read-only Growth rolls the day and replaces the wishes
 const state = { level: 3, mood: 60, growth: { day: today, wishes: [{ id: 'a', kind: 'stroke', target: 10, progress: 4, done: false }, { id: 'b', kind: 'learn', target: 1, progress: 0, done: false, platform: true }], coins: 6, stats: { stroke: 40, type: 1200 }, finds: [{ id: 'leaf', emoji: '🍂', at: 1 }, { id: 'leaf', emoji: '🍂', at: 2 }, { id: 'key', emoji: '🔑', at: 3 }], journal: [{ day: '2026-10-11', text: '你今天打了 300 个字。 还行。' }], best: { catch: 9 }, games: 2, learnedBaseline: 2 } };
 const emitted = [];
-globalThis.window = { __TAURI__: { core: { invoke: async (cmd, a) => { if (a.path.endsWith('pet.json')) return JSON.stringify(pet); if (a.path.endsWith('state.json')) return JSON.stringify(state); throw new Error('no persona'); } }, event: { emit: (n, p) => emitted.push([n, p]) } } };
+globalThis.window = { __TAURI__: { core: { invoke: async (cmd, a) => { if (a.path.endsWith('pet.json')) return JSON.stringify(pet); if (a.path.endsWith('state.json')) return JSON.stringify(state); throw new Error('no persona'); } }, event: { emit: async (n, p) => emitted.push([n, p]), listen: async (n, fn) => { listeners[n] = fn; } } } };
+const listeners = {};
 let intervalFn = null; globalThis.setInterval = (fn) => { intervalFn = fn; return 1; };
 await new Function('I18N', 'Growth', 'GROWTH_DEFS', js)(globalThis.I18N, globalThis.Growth, globalThis.GROWTH_DEFS);
 await new Promise(r => setTimeout(r, 20));
@@ -27,5 +28,10 @@ globalThis.window.__panel.setTab('wishes'); let b = el('body').innerHTML;
 assert.ok(b.includes('被摸 10 下') && b.includes('width:40%') && b.includes('要回助手那里'), 'wishes with progress and the platform tag');
 globalThis.window.__panel.setTab('finds'); b = el('body').innerHTML; assert.ok(b.includes('🍂') && b.includes('×2') && b.includes('旧钥匙') && b.includes('第 1 页'), 'finds grid');
 globalThis.window.__panel.setTab('journal'); b = el('body').innerHTML; assert.ok(b.includes('2026-10-11') && b.includes('300'), 'diary');
+// 0.9.3: the window is reused — it announces itself, and `notebook-open` from the pet window re-points it at a pet
+assert.ok(emitted.some(([n]) => n === 'notebook-ready'), 'notebook-ready emitted'); assert.ok(emitted.some(([n, p]) => n === 'notebook-loaded' && p.ok), 'notebook-loaded ok');
+assert.ok(typeof listeners['notebook-open'] === 'function', 'listens for notebook-open');
+listeners['notebook-open']({ payload: { dir: 'C:\\pets\\y', lang: 'zh-CN' } }); await new Promise(r => setTimeout(r, 20));
+assert.ok(emitted.filter(([n]) => n === 'notebook-loaded').length === 2, 'reloaded for the new dir');
 globalThis.window.__panel.setTab('chapters'); b = el('body').innerHTML; assert.ok(b.includes('老朋友') && b.includes('混熟了') && b.includes('教它一个新动作'), 'chapters with tasks');
 console.log('panel render ok');

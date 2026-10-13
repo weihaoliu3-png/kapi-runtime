@@ -168,36 +168,55 @@ fn peer_pets(id: String, name: String, rect: serde_json::Value) -> Vec<Peer> {
     out
 }
 
-/// The notebook window (0.9.0): a normal small window showing what the pet knows, today's wishes, finds, diary, chapters.
-/// It reads the pet folder itself (?dir=…) and refreshes from state.json; one per app, re-shown if already open.
-#[tauri::command]
-fn open_panel_window(app: AppHandle, pet_dir: String, lang: String) -> Result<(), String> {
-    if let Some(w) = app.get_webview_window("notebook") { let _ = w.show(); let _ = w.set_focus(); return Ok(()); }
-    // 0.9.2 (Windows 白屏 + 桌宠失去鼠标): a command runs on a worker thread, and a WebView2 window created there has no
-    // message pump of its own — it sits on the loading page forever, never closes, and the main window's cursor
-    // calls queue up behind it. The same mechanism was behind the old "叫另一只出来" freeze. Windows are therefore
-    // created on the main thread only, and the result is reported back to the page as an event.
-    let q = format!("panel.html?dir={}&lang={}", urlencode(&pet_dir), urlencode(&lang));
-    let handle = app.clone();
-    app.run_on_main_thread(move || {
-        let r = tauri::WebviewWindowBuilder::new(&handle, "notebook", tauri::WebviewUrl::App(q.into()))
-            .title("Kapi").inner_size(560.0, 640.0).min_inner_size(420.0, 480.0).resizable(true).decorations(true).always_on_top(false)
-            .build();
-        match r {
-            Ok(w) => { let _ = w.set_focus(); let _ = handle.emit("aux-window", serde_json::json!({ "label": "notebook", "ok": true })); }
-            Err(e) => { let _ = handle.emit("aux-window", serde_json::json!({ "label": "notebook", "ok": false, "error": e.to_string() })); }
+/// Append one line to <app_data>/kapi-debug.log from the native side (the page's own logger needs a working IPC;
+/// when the bug is "the IPC froze" only this one tells the story).
+fn native_log(app: &AppHandle, line: &str) {
+    if let Ok(data) = app.path().app_data_dir() {
+        let _ = fs::create_dir_all(&data);
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(data.join("kapi-debug.log")) {
+            use std::io::Write;
+            let _ = writeln!(f, "{} native {}", stamp, line);
         }
-    }).map_err(|e| e.to_string())?;
-    Ok(())
-}
-fn urlencode(s: &str) -> String {
-    let mut out = String::new();
-    for b in s.bytes() {
-        match b { b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char), _ => out.push_str(&format!("%{:02X}", b)) }
     }
-    out
 }
 
+/// 0.9.3 (Windows 小本子白屏 + 桌宠永久失去鼠标, 0.9.2 still reproduced): the notebook is no longer CREATED at
+/// runtime at all. It is declared in tauri.conf.json next to the pet window (hidden), so it is built by the same
+/// start-up path that demonstrably works, and opening it is only "tell the page which pet, show, focus". The
+/// command is `async` so it runs on a worker thread and can never sit inside the main-thread IPC handler
+/// (WebviewWindowBuilder::build from a sync command deadlocks WebView2 on Windows — that was 0.9.1; 0.9.2's
+/// run_on_main_thread closure was still built from inside the event loop's own callback). If the window is
+/// somehow missing, it is built from this worker thread (the documented-safe way) and reported either way.
+#[tauri::command]
+async fn open_panel_window(app: AppHandle, pet_dir: String, lang: String) -> Result<(), String> {
+    native_log(&app, "notebook-click");
+    let payload = serde_json::json!({ "dir": pet_dir, "lang": lang });
+    let w = match app.get_webview_window("notebook") {
+        Some(w) => w,
+        None => {
+            native_log(&app, "notebook window missing — building from worker thread");
+            match tauri::WebviewWindowBuilder::new(&app, "notebook", tauri::WebviewUrl::App("panel.html".into()))
+                .title("Kapi").inner_size(560.0, 640.0).min_inner_size(420.0, 480.0).resizable(true).decorations(true).always_on_top(false).visible(false)
+                .build() {
+                Ok(w) => { native_log(&app, "window-created notebook"); w }
+                Err(e) => { native_log(&app, &format!("load-error notebook build: {}", e)); let _ = app.emit("aux-window", serde_json::json!({ "label": "notebook", "ok": false, "error": e.to_string() })); return Err(e.to_string()); }
+            }
+        }
+    };
+    let _ = app.emit_to(tauri::EventTarget::labeled("notebook"), "notebook-open", payload.clone());
+    let _ = app.emit("notebook-open", payload);      // the page also listens app-wide, in case emit_to races the hidden webview
+    let r1 = w.show(); let r2 = w.set_focus(); let _ = w.unminimize();
+    native_log(&app, &format!("window-shown notebook show={:?} focus={:?}", r1.is_ok(), r2.is_ok()));
+    let _ = app.emit("aux-window", serde_json::json!({ "label": "notebook", "ok": true }));
+    Ok(())
+}
+/// Hide (never destroy) the notebook: it is reused for the whole run.
+#[tauri::command]
+async fn close_panel_window(app: AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("notebook") { let _ = w.hide(); native_log(&app, "notebook hidden"); }
+    Ok(())
+}
 /// One Kapi per folder (0.8.16): an exclusive lock on <folder>/.kapi.lock held for the whole run. A second launch
 /// from the same folder cannot take it: it touches <folder>/.kapi.show so the running one shows itself, and exits.
 /// A Kapi in another folder has its own lock and runs independently — that is how two pets share a desktop.
@@ -444,7 +463,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             list_pets, read_text, read_file_b64, write_text, settings_path, bundle_info, import_pet, export_pet,
-            active_window, battery_status, peer_pets, open_panel_window, request_input_permission, input_watcher_state
+            active_window, battery_status, peer_pets, open_panel_window, close_panel_window, request_input_permission, input_watcher_state
         ])
         .setup(|app| {
             let show = MenuItem::with_id(app, "toggle", "显示 / 隐藏", true, None::<&str>)?;
@@ -486,6 +505,12 @@ pub fn run() {
             spawn_permission_poll(app.handle().clone());
             spawn_show_watcher(app.handle().clone());
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // the notebook is reused for the whole run: closing it only hides it (the pet window is never closed this way)
+            if window.label() == "notebook" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event { api.prevent_close(); let _ = window.hide(); native_log(window.app_handle(), "notebook close → hidden"); }
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running Kapi");
