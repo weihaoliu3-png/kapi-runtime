@@ -2,51 +2,106 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kapi</title>
 <style>
-  :root { --bg: #fffcf7; --ink: #2c2b29; --mute: #7e7972; --line: #e6dccf; --tint: #f2e8dc; --warm: #d1775a; --ok: #4caf50; }
-  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; font-size: 13px; user-select: none; }
-  #top { display: flex; align-items: center; gap: 10px; padding: 12px 16px 8px; border-bottom: 1px solid var(--line); }
-  #top h1 { font-size: 16px; margin: 0; font-weight: 600; }
-  #top .sub { color: var(--mute); flex: 1; }
-  #top .coins { background: var(--tint); border-radius: 12px; padding: 3px 10px; }
-  #tabs { display: flex; gap: 4px; padding: 8px 12px 0; border-bottom: 1px solid var(--line); }
-  #tabs button { border: 0; background: transparent; padding: 8px 10px; font-size: 13px; color: var(--mute); cursor: pointer; border-bottom: 2px solid transparent; }
-  #tabs button.on { color: var(--ink); border-bottom-color: var(--warm); font-weight: 600; }
-  #body { padding: 12px 16px 20px; overflow: auto; height: calc(100% - 110px); box-sizing: border-box; }
-  h2 { font-size: 13px; margin: 14px 0 6px; color: var(--mute); font-weight: 600; }
-  h2:first-child { margin-top: 2px; }
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-  .chip { background: var(--tint); border-radius: 10px; padding: 5px 10px; }
-  .chip.todo { background: transparent; border: 1px dashed var(--line); color: var(--mute); }
-  .chip.sub { opacity: .8; }
-  .row { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid #f1ebe2; }
-  .row .lbl { flex: 1; }
-  .row .bar { width: 110px; height: 7px; background: #eee6da; border-radius: 4px; overflow: hidden; }
-  .row .bar i { display: block; height: 100%; background: var(--warm); }
-  .row.done .lbl { color: var(--mute); text-decoration: line-through; }
-  .row .tag { font-size: 11px; color: var(--warm); }
-  .hint { color: var(--mute); font-size: 12px; margin-top: 10px; line-height: 1.5; }
+  /* 0.9.4 growth-handbook look: warm paper, rounded cards, light shadows, the pet's own colour as accent.
+     Everything static — no keyframe animation, transitions only on colour/transform (cheap on CPU/GPU). */
+  :root { --bg: #fbf6ee; --paper: #fffdf9; --ink: #2c2b29; --mute: #7a736a; --line: #ebe1d3; --tint: #f4ece0; --tint2: #ede3d4;
+          --accent: #d1775a; --accent-ink: #fff; --accent-soft: #f6e3da; --ok: #4f9d5d; --warn: #b8643f; --shadow: 0 1px 2px rgba(80, 60, 30, .06), 0 4px 12px rgba(80, 60, 30, .07); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif; font-size: 14px; line-height: 1.45; user-select: none; -webkit-user-select: none; }
+  body { display: flex; flex-direction: column; overflow: hidden; }
+  button { font: inherit; color: inherit; }
+  /* header */
+  #top { display: flex; align-items: center; gap: 12px; padding: 14px 18px 12px; background: var(--paper); border-bottom: 1px solid var(--line); box-shadow: 0 1px 0 rgba(255,255,255,.6) inset; flex: none; }
+  #top::before { content: ''; position: absolute; left: 0; top: 0; right: 0; height: 4px; background: var(--accent); opacity: .85; }
+  #top { position: relative; }
+  #avatar { width: 48px; height: 48px; border-radius: 50%; background: var(--accent-soft); border: 2px solid var(--accent); flex: none; display: flex; align-items: center; justify-content: center; font-size: 24px; overflow: hidden; }
+  #avatar img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
+  #who { flex: 1; min-width: 0; }
+  #top h1 { font-size: 18px; margin: 0; font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
+  #top .sub { color: var(--mute); font-size: 13px; display: block; overflow-wrap: anywhere; }
+  #top .recent { display: inline-block; margin-top: 4px; font-size: 12px; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 1px 9px; max-width: 100%; overflow-wrap: anywhere; }
+  #top .coins { background: var(--tint); border-radius: 999px; padding: 4px 12px; font-weight: 600; flex: none; font-size: 13px; }
+  /* tabs */
+  #tabs { display: flex; gap: 4px; padding: 10px 14px 0; flex: none; overflow-x: auto; scrollbar-width: none; }
+  #tabs::-webkit-scrollbar { display: none; }
+  #tabs button { border: 0; background: transparent; padding: 7px 12px; font-size: 14px; color: var(--mute); cursor: pointer; border-radius: 999px; white-space: nowrap; }
+  #tabs button:hover { background: var(--tint); color: var(--ink); }
+  #tabs button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  #tabs button.on { color: var(--accent-ink); background: var(--accent); font-weight: 600; }
+  /* body: the only scroll area; stable gutter so the bar never sits on a button */
+  #body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 10px 18px 24px; scrollbar-gutter: stable; }
+  #body::-webkit-scrollbar { width: 10px; } #body::-webkit-scrollbar-thumb { background: #d9cdbb; border-radius: 6px; border: 2px solid var(--bg); }
+  h2 { font-size: 13px; margin: 16px 0 8px; color: var(--mute); font-weight: 600; letter-spacing: .02em; }
+  h2:first-child { margin-top: 4px; }
+  h2 .cnt { font-weight: 500; opacity: .8; margin-left: 4px; }
+  /* skill cards */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(156px, 1fr)); gap: 10px; }
+  .card { position: relative; background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 12px 12px 10px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 4px; min-height: 96px; transition: background .12s, border-color .12s, transform .06s, box-shadow .12s; }
+  .card .ic { font-size: 22px; line-height: 1; height: 26px; }
+  .card .nm { font-weight: 600; font-size: 14px; overflow-wrap: anywhere; line-height: 1.3; }
+  .card .kd { font-size: 12px; color: var(--mute); }
+  .card .kd .tag { display: inline-block; background: var(--tint); border-radius: 999px; padding: 0 7px; margin-left: 4px; }
+  .card .act { margin-top: auto; padding-top: 6px; font-size: 13px; color: var(--accent); display: flex; align-items: center; gap: 6px; min-height: 22px; }
+  .card .act .pl { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-size: 11px; flex: none; }
+  .card .st { font-size: 12px; color: var(--mute); min-height: 16px; overflow-wrap: anywhere; }
+  .card.can { cursor: pointer; }
+  .card.can:hover { background: #fff; border-color: var(--accent); box-shadow: 0 2px 4px rgba(80,60,30,.08), 0 8px 18px rgba(80,60,30,.10); }
+  .card.can:active, .card.pressed { transform: scale(.985); background: var(--accent-soft); }
+  .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .card.busy { border-color: var(--accent); background: var(--accent-soft); cursor: progress; }
+  .card.busy .act { color: var(--warn); }
+  .card.busy .pl { background: var(--warn); }
+  .card.off { opacity: .62; cursor: not-allowed; background: var(--tint); box-shadow: none; }
+  .card.off .act { color: var(--mute); } .card.off .pl { background: #cdc3b4; }
+  .card.info { background: transparent; border-style: dashed; box-shadow: none; }
+  .card.info .nm { color: var(--mute); font-weight: 500; }
+  .card.entry .act { color: var(--mute); }
+  .card .st.err { color: var(--warn); } .card .st.ok { color: var(--ok); }
+  /* look-follow switch */
+  .sw { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; border: 0; background: transparent; padding: 2px 0; border-radius: 999px; font-size: 13px; color: var(--ink); }
+  .sw .knob { width: 38px; height: 22px; border-radius: 999px; background: #cdc3b4; position: relative; transition: background .12s; flex: none; }
+  .sw .knob::after { content: ''; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2); transition: left .12s; }
+  .sw[aria-checked="true"] .knob { background: var(--accent); } .sw[aria-checked="true"] .knob::after { left: 19px; }
+  .sw:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .sw:disabled { cursor: not-allowed; opacity: .6; }
+  .empty { background: var(--tint); border-radius: 14px; padding: 14px; color: var(--mute); text-align: center; grid-column: 1 / -1; }
+  /* wishes / finds / journal / chapters (unchanged information, softer look) */
+  .row { display: flex; align-items: center; gap: 10px; padding: 9px 12px; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px; box-shadow: var(--shadow); }
+  .row .lbl { flex: 1; overflow-wrap: anywhere; }
+  .row .bar { width: 96px; height: 8px; background: var(--tint2); border-radius: 4px; overflow: hidden; flex: none; }
+  .row .bar i { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
+  .row.done { opacity: .7; } .row.done .lbl { text-decoration: line-through; }
+  .row .tag { font-size: 12px; color: var(--accent); }
+  .row .mk { color: var(--accent); font-weight: 700; width: 16px; text-align: center; }
+  .hint { color: var(--mute); font-size: 13px; margin-top: 12px; line-height: 1.5; }
   .finds { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
-  .find { aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; background: var(--tint); border-radius: 12px; font-size: 26px; }
-  .find small { font-size: 10px; color: var(--mute); margin-top: 2px; }
-  .find.empty { background: transparent; border: 1px dashed var(--line); }
-  .journal p { margin: 0 0 8px; line-height: 1.5; } .journal b { color: var(--mute); font-weight: 500; margin-right: 6px; }
-  .ch { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f1ebe2; align-items: baseline; }
-  .ch .n { width: 36px; color: var(--mute); } .ch .name { width: 90px; font-weight: 600; } .ch.cur .name { color: var(--warm); } .ch .task { flex: 1; color: var(--mute); }
-  .ch.locked { opacity: .5; }
-  .btns { margin-top: 12px; display: flex; gap: 8px; }
-  .btns button { border: 0; border-radius: 10px; background: var(--tint); padding: 8px 14px; font-size: 13px; cursor: pointer; }
+  .find { aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; background: var(--paper); border: 1px solid var(--line); border-radius: 14px; font-size: 26px; box-shadow: var(--shadow); }
+  .find small { font-size: 11px; color: var(--mute); margin-top: 3px; text-align: center; padding: 0 3px; overflow-wrap: anywhere; }
+  .find.empty { background: transparent; border: 1px dashed var(--line); box-shadow: none; }
+  .journal p { margin: 0 0 8px; line-height: 1.5; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; box-shadow: var(--shadow); } .journal b { color: var(--accent); font-weight: 600; margin-right: 8px; }
+  .ch { display: flex; gap: 10px; padding: 10px 12px; margin-bottom: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); align-items: baseline; box-shadow: var(--shadow); flex-wrap: wrap; }
+  .ch .n { width: 44px; color: var(--mute); flex: none; } .ch .name { min-width: 90px; font-weight: 600; } .ch.cur { border-color: var(--accent); } .ch.cur .name { color: var(--accent); } .ch .task { flex: 1 1 160px; color: var(--mute); overflow-wrap: anywhere; }
+  .ch.locked { opacity: .5; box-shadow: none; }
+  .btns { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .btns button { border: 0; border-radius: 12px; background: var(--accent); color: var(--accent-ink); padding: 9px 16px; font-size: 14px; font-weight: 600; cursor: pointer; box-shadow: var(--shadow); }
+  .btns button:hover { filter: brightness(1.06); } .btns button:active { transform: scale(.98); } .btns button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .btns button.busy { opacity: .7; cursor: progress; } .btns .st { font-size: 13px; color: var(--mute); align-self: center; }
   .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-  .stat { background: var(--tint); border-radius: 10px; padding: 8px; text-align: center; } .stat b { display: block; font-size: 18px; font-weight: 600; } .stat small { color: var(--mute); }
+  .stat { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 8px 6px; text-align: center; box-shadow: var(--shadow); } .stat b { display: block; font-size: 18px; font-weight: 700; } .stat small { color: var(--mute); font-size: 12px; }
+  @media (max-width: 479px) { .cards { grid-template-columns: 1fr; } .finds { grid-template-columns: repeat(3, 1fr); } .stats { grid-template-columns: repeat(2, 1fr); } #top { padding: 12px 14px 10px; } #body { padding: 8px 14px 20px; } }
+  @media (prefers-reduced-motion: reduce) { .card, .sw .knob, .sw .knob::after { transition: none; } }
 </style>
 </head>
 <body>
-  <div id="top"><h1 id="name">Kapi</h1><span class="sub" id="sub"></span><span class="coins" id="coins"></span></div>
+  <div id="top"><div id="avatar">🐾</div><div id="who"><h1 id="name">Kapi</h1><span class="sub" id="sub"></span><span class="recent" id="recent"></span></div><span class="coins" id="coins"></span></div>
   <div id="tabs"></div>
   <div id="body"></div>
   <script src="i18n.js"></script>
   <script src="growth.js"></script>
+  <script src="engine.js"></script>   <!-- only for PET_PERFORMABLE: which procedural presets are tricks you can ask for -->
   <script>
   (async () => {
     // 0.9.3: this window is created hidden at start-up and reused; the pet window tells it which pet via the
@@ -56,14 +111,20 @@
     const invoke = window.__TAURI__.core.invoke; const emit = window.__TAURI__.event.emit; const listen = window.__TAURI__.event.listen;
     let sep = '/'; let join = (a, b) => a.replace(/[\\/]+$/, '') + sep + b;
     function setDir(d, l) { dir = d; lang = l || lang; T = I18N.pick(lang); G = T.growth; P = G.panel; sep = dir.includes('\\') ? '\\' : '/'; }
-    let tab = 'skills', pet = null, persona = null, state = null;
+    let tab = 'skills', pet = null, persona = null, state = null, settings = null, avatar = { key: '', src: '' };
     const esc = (x) => String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const $ = (id) => document.getElementById(id);
     async function load() {
       try {
         pet = JSON.parse(await invoke('read_text', { path: join(dir, 'pet.json') }));
         try { persona = JSON.parse(await invoke('read_text', { path: join(dir, 'persona.json') })); } catch (_) { persona = {}; }
         try { state = JSON.parse(await invoke('read_text', { path: join(dir, 'state.json') })); } catch (_) { state = {}; }
-      } catch (e) { document.getElementById('body').textContent = String(e); return false; }
+        // look-follow lives in the Kapi folder's settings.json (0.9.4); missing = on, and the switch falls back to its optimistic state
+        try { settings = JSON.parse(await invoke('read_text', { path: await invoke('settings_path') })); } catch (_) { settings = settings || null; }
+        // avatar: the pet's own base frame, read once per pet (a data: URL like the pet window uses)
+        const base = pet.layers && pet.layers.base; const key = base ? join(dir, base) : '';
+        if (key !== avatar.key) { avatar = { key, src: '' }; if (key) { try { avatar.src = await invoke('read_file_b64', { path: key }); } catch (_) { avatar.src = ''; } } }
+      } catch (e) { $('body').textContent = String(e); return false; }
       return true;
     }
     function summary() {
@@ -72,24 +133,120 @@
       const g = new Growth(st, { now: () => Date.now() / 1000, save: () => {}, manifest: pet, care: { s: st }, level: () => st.level || 1, t: () => T, say: () => {} });
       return g.summary();
     }
-    const actName = (id) => (G.candidates && G.candidates[id]) || id;
-    function render() {
-      if (!pet) return; const s = summary(); const lv = state.level || 1;
-      document.getElementById('name').textContent = pet.name || 'Kapi';
-      document.getElementById('sub').textContent = `Lv.${lv} · ${(T.care.titles || [])[Math.min(lv, 10) - 1] || ''} · ${G.chapter[s.chapter.id] || ''}`;
-      document.getElementById('coins').textContent = `♥ ${s.coins} ${G.coins}`;
-      const tabs = document.getElementById('tabs'); tabs.innerHTML = Object.entries(P.tabs).map(([k, v]) => `<button data-tab="${k}" class="${k === tab ? 'on' : ''}">${v}</button>`).join('');
-      tabs.querySelectorAll('button').forEach(b => b.onclick = () => { tab = b.dataset.tab; render(); });
-      const body = document.getElementById('body'); let h = '';
+    const actName = (id) => (G.candidates && G.candidates[id]) || (P.names && P.names[id]) || (T.pending.labels || {})[id] || id;
+    const petName = () => (pet && pet.name) || 'Kapi';
+    // accent colour: persona / pet.json may name one; the garden's flower colour is the next best "its colour"; else the default
+    function accent() {
+      const c = (persona && (persona.color || persona.accent)) || (pet && (pet.accent || pet.color || (pet.theme && pet.theme.accent) || (pet.garden && pet.garden.color))) || '';
+      return /^#[0-9a-fA-F]{6}$/.test(String(c)) ? c : '#d1775a';
+    }
+    function applyAccent() {
+      const c = accent(); const r = parseInt(c.slice(1, 3), 16), g = parseInt(c.slice(3, 5), 16), b = parseInt(c.slice(5, 7), 16);
+      const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      const dark = lum > 0.62;                                     // a pale accent is darkened so text on it stays readable
+      const k = dark ? 0.6 : 1; const rr = Math.round(r * k), gg = Math.round(g * k), bb = Math.round(b * k);
+      const s = document.documentElement && document.documentElement.style; if (!s || !s.setProperty) return;
+      s.setProperty('--accent', `rgb(${rr},${gg},${bb})`); s.setProperty('--accent-soft', `rgba(${r},${g},${b},.16)`); s.setProperty('--accent-ink', '#fff');
+    }
+    // ---------- what the pet can do, as cards ----------
+    // mirrors main.js requestPlay(): frames actions and these procedural presets perform; idle / drag / drop-type states do not
+    const PERFORMABLE = window.PET_PERFORMABLE || [];        // 0.9.5: engine.js owns this list (main.js uses the same one), never hand-copied
+    const STATE_IDS = ['idle', 'drag', 'drop', 'dragWiggle', 'typing'];
+    const ICONS = { play: '✨', walk: '🚶', expr: '🙂', voice: '🔊', look: '👀', outfit: '👕', info: '📖', care: '🍚' };
+    function cards(s) {
+      const a = (pet.actions || {}); const out = [];
+      const custom = Object.keys(a).filter(id => !STATE_IDS.includes(id) && !['eat', 'drink', 'sleep'].includes(id));
+      for (const id of custom) {
+        const d = a[id] || {};
+        if (d.type === 'frames' && d.cycle) out.push({ kind: 'walk', id, name: actName(id), ok: d.cycle === true, why: d.cycle === true ? '' : P.ackNoWalk });
+        else if (id === 'walk') out.push({ kind: 'walk', id, name: actName(id), ok: false, why: P.ackNoWalk });
+        else if (d.type === 'frames') out.push({ kind: 'play', id, name: actName(id) });
+        else if (d.type === 'procedural' && PERFORMABLE.includes(d.preset)) out.push({ kind: 'play', id, name: actName(id), builtin: true });
+      }
+      for (const id of ['eat', 'drink', 'sleep']) {                   // care moves run the care flow (props, cooldown, xp, wishes)
+        const d = a[id]; if (!d) continue; const standIn = d.type !== 'frames';
+        if (d.type === 'frames' || (d.type === 'procedural' && PERFORMABLE.includes(d.preset))) out.push({ kind: 'play', id, name: actName(id), care: true, standIn });
+        else out.push({ kind: 'info', id, name: actName(id), standIn: true });
+      }
+      return out;
+    }
+    // ---------- command protocol (main.js answers every panel-cmd with panel-ack {cmd, action, ok, reason}) ----------
+    let pending = null;                                               // {key, cmd, action, timer}: one at a time; double-clicks are ignored
+    const status = {};                                                // key -> {text, cls} shown on the card; survives the 2 s re-render
+    let lookOn = null;                                                // optimistic switch state until settings.json says otherwise
+    const ACK_TEXT = { busy: 'ackBusy', sleeping: 'ackSleeping', noWalk: 'ackNoWalk', cooldown: 'ackCooldown', unknown: 'ackUnknown', rejected: 'ackRejected' };
+    function setStatus(key, text, cls, ms) {
+      if (text) status[key] = { text, cls: cls || '' }; else delete status[key];
+      const el = document.querySelector ? document.querySelector(`[data-key="${key}"]`) : null;
+      if (el) { const st = el.querySelector('.st'); if (st) { st.textContent = text || ''; st.className = 'st ' + (cls || ''); } el.classList.toggle('busy', cls === 'busy'); }
+      if (ms) setTimeout(() => { if (status[key] && status[key].text === text) setStatus(key, ''); }, ms);
+    }
+    function send(key, payload) {
+      if (pending) return false;                                      // only one request in flight: a second click while performing is ignored
+      pending = { key, cmd: payload.cmd, action: payload.action || payload.name || '', timer: setTimeout(() => { if (pending && pending.key === key) { pending = null; setStatus(key, P.ackTimeout, 'err', 3000); } }, 4000) };
+      setStatus(key, P.performing, 'busy');
+      try { emit('panel-cmd', payload); } catch (_) {}
+      return true;
+    }
+    function onAck(p) {
+      if (!pending) return; const c = p.cmd;
+      const mine = c === pending.cmd && (['voice', 'lookFollow', 'game', 'care'].includes(c) || String(p.action || '') === pending.action);
+      if (!mine) return;
+      const key = pending.key; clearTimeout(pending.timer); pending = null;
+      if (c === 'lookFollow') {
+        if (p.ok) { lookOn = p.action === 'on'; if (settings) settings.lookFollow = lookOn; } else lookOn = null;   // failed: back to what settings say
+        setStatus(key, p.ok ? '' : (P[ACK_TEXT[p.reason]] || P.ackRejected), p.ok ? '' : 'err', 3000); render(true); return;
+      }
+      if (p.ok) setStatus(key, P.ackOk, 'ok', 1800); else setStatus(key, P[ACK_TEXT[p.reason]] || P.ackRejected, 'err', 3000);
+    }
+    const lookState = () => lookOn !== null ? lookOn : !(settings && settings.lookFollow === false);
+    function cardHtml(c) {
+      const key = `${c.kind}:${c.id}`; const st = status[key] || { text: '', cls: '' }; const busy = st.cls === 'busy';
+      const base = `data-key="${esc(key)}" data-kind="${c.kind}" data-id="${esc(c.id)}"`;
+      const tag = c.standIn ? `<span class="tag">${P.kind.standIn}</span>` : '';
+      const kd = `<div class="kd">${c.care ? P.kind.play : P.kind[c.kind]}${tag}</div>`;
+      const stl = `<div class="st ${st.cls}">${esc(st.text)}</div>`;
+      if (c.kind === 'play' || c.kind === 'expr' || c.kind === 'voice' || (c.kind === 'walk' && c.ok)) {
+        const act = c.kind === 'expr' ? P.lookOnce : c.kind === 'voice' ? P.listenOnce : c.kind === 'walk' ? P.walkTry : P.tryIt;
+        return `<div class="card can ${busy ? 'busy' : ''}" role="button" tabindex="0" aria-label="${esc(c.name)}" ${base}><div class="ic">${ICONS[c.care ? 'care' : c.kind]}</div><div class="nm">${esc(c.name)}</div>${kd}<div class="act"><span class="pl">▶</span>${act}</div>${stl}</div>`;
+      }
+      if (c.kind === 'walk') return `<div class="card off" aria-disabled="true" ${base}><div class="ic">${ICONS.walk}</div><div class="nm">${esc(c.name)}</div>${kd}<div class="act"><span class="pl">▶</span>${P.walkTry}</div><div class="st err">${esc(c.why)}</div></div>`;
+      if (c.kind === 'look') {
+        const on = lookState();
+        return `<div class="card ${busy ? 'busy' : ''}" ${base}><div class="ic">${ICONS.look}</div><div class="nm">${esc(c.name)}</div>${kd}<div class="act"><button type="button" class="sw" role="switch" aria-checked="${on}" data-sw="look" ${busy ? 'disabled' : ''}><span class="knob"></span><span>${on ? P.switchOn : P.switchOff}</span></button></div>${stl}</div>`;
+      }
+      if (c.kind === 'outfit') return `<div class="card entry" ${base}><div class="ic">${ICONS.outfit}</div><div class="nm">${esc(c.name)}</div>${kd}<div class="act">${P.outfitGo}</div></div>`;
+      return `<div class="card info" ${base}><div class="ic">${ICONS.info}</div><div class="nm">${esc(c.name)}</div>${kd}<div class="act">${c.standIn ? P.standInNote + ' · ' : ''}${P.teachGo}</div></div>`;
+    }
+    const grid = (list, empty) => `<div class="cards">${list.length ? list.map(cardHtml).join('') : `<div class="empty">${esc(empty)}</div>`}</div>`;
+    let lastHtml = '', lastTop = '';
+    function render(force) {
+      if (!pet) return; const s = summary(); const lv = state.level || 1; const name = petName();
+      applyAccent();
+      $('name').textContent = name;
+      $('sub').textContent = `Lv.${lv} · ${(T.care.titles || [])[Math.min(lv, 10) - 1] || ''} · ${G.chapter[s.chapter.id] || ''}`;
+      const recent = s.learned.length ? s.learned[s.learned.length - 1] : '';
+      $('recent').textContent = recent ? `${P.recent}：${actName(recent)}` : `${P.handbook} · ${P.recentNone}`;
+      $('coins').textContent = `♥ ${s.coins} ${G.coins}`;
+      const av = $('avatar'); const topKey = avatar.src ? 'img:' + avatar.key : 'emoji';
+      if (topKey !== lastTop) { lastTop = topKey; av.innerHTML = avatar.src ? `<img alt="" src="${avatar.src}">` : '🐾'; }
+      const tabs = $('tabs'); tabs.innerHTML = Object.entries(P.tabs).map(([k, v]) => `<button type="button" data-tab="${k}" class="${k === tab ? 'on' : ''}" aria-selected="${k === tab}">${v}</button>`).join('');
+      tabs.querySelectorAll('button').forEach(b => b.onclick = () => { tab = b.dataset.tab; render(true); });
+      const body = $('body'); let h = '';
       if (tab === 'skills') {
-        const cand = Object.keys(G.candidates).filter(id => !s.learned.includes(id) && !['eat', 'drink', 'sleep'].includes(id));
-        h += `<h2>${P.learned}</h2><div class="chips">${s.learned.length ? s.learned.map(id => `<span class="chip">${esc(actName(id))}</span>`).join('') : `<span class="chip todo">${P.empty}</span>`}</div>`;
-        if (s.standIn.length) h += `<h2>${P.standIn}</h2><div class="chips">${s.standIn.map(id => `<span class="chip todo">${esc((T.pending.labels || {})[id] || id)}</span>`).join('')}</div>`;
-        h += `<h2>${P.notYet}</h2><div class="chips">${cand.map(id => `<span class="chip todo">${esc(actName(id))}</span>`).join('')}</div>`;
-        h += `<h2>${P.expr}</h2><div class="chips">${s.expressions.length ? s.expressions.map(e => `<span class="chip sub">${esc(e)}</span>`).join('') : `<span class="chip todo">${P.empty}</span>`}</div>`;
+        const all = cards(s); const learned = all.filter(c => c.kind !== 'info' && !c.standIn); const standIn = all.filter(c => c.standIn);
+        const cand = Object.keys(G.candidates).filter(id => !s.learned.includes(id) && !['eat', 'drink', 'sleep'].includes(id) && !(pet.actions || {})[id]);
+        h += `<h2>${P.learned}<span class="cnt">${learned.length}</span></h2>${grid(learned, P.emptyLearned(name))}`;
+        if (standIn.length) h += `<h2>${P.standIn}</h2>${grid(standIn, '')}`;
+        h += `<h2>${P.expr}</h2>${grid(s.expressions.map(e => ({ kind: 'expr', id: e, name: e })), P.emptyExpr(name))}`;
         const look = s.look === 'ring' ? P.lookRing : s.look === 'frames8' ? P.lookFrames : P.lookNone;
         const v = s.voice; const voice = v.kind === 'tts' ? P.voiceTts : v.kind === 'none' ? P.voiceNone : v.species ? P.voiceSpecies(v.species) : P.voiceBabble;
-        h += `<h2>${P.look} · ${P.voice}</h2><div class="chips"><span class="chip sub">${look}</span><span class="chip sub">${voice}</span>${s.outfits.map(o => `<span class="chip sub">👕 ${esc(o)}</span>`).join('')}</div>`;
+        const misc = [];
+        misc.push(s.look === 'none' ? { kind: 'info', id: 'look', name: `${P.look} · ${look}` } : { kind: 'look', id: 'look', name: `${P.look} · ${look}` });
+        misc.push(v.kind === 'none' ? { kind: 'info', id: 'voice', name: `${P.voice} · ${voice}` } : { kind: 'voice', id: 'voice', name: `${P.voice} · ${voice}` });
+        for (const o of s.outfits) misc.push({ kind: 'outfit', id: o, name: `${P.outfitLabel} · ${o}` });
+        h += `<h2>${P.look} · ${P.voice}</h2>${grid(misc, '')}`;
+        h += `<h2>${P.notYet}</h2>${grid(cand.map(id => ({ kind: 'info', id, name: actName(id) })), P.emptyNotYet(name))}`;
         const st = s.stats || {};
         h += `<h2>${P.stats}</h2><div class="stats">${[['stroke', P.statStroke], ['click', P.statClick], ['type', P.statType], ['feed', P.statFeed], ['water', P.statWater], ['whip', P.statWhip], ['gift', P.statGift]].map(([k, l]) => `<div class="stat"><b>${st[k] || 0}</b><small>${l}</small></div>`).join('')}<div class="stat"><b>${s.best.catch || 0}</b><small>${P.statCatch}</small></div></div>`;
         h += `<p class="hint">${P.hint}</p>`;
@@ -97,9 +254,10 @@
         h += `<h2>${P.wishesToday} · ${s.day}</h2>`;
         for (const w of s.wishes) {
           const label = (G.wish[w.kind] || w.kind).replace('{n}', w.target); const pct = Math.round(100 * Math.min(1, w.progress / w.target));
-          h += `<div class="row ${w.done ? 'done' : ''}"><span>${w.done ? '✓' : '○'}</span><span class="lbl">${esc(label)} ${w.platform ? `<span class="tag">${P.platformWish}</span>` : ''}</span><span class="bar"><i style="width:${pct}%"></i></span></div>`;
+          h += `<div class="row ${w.done ? 'done' : ''}"><span class="mk">${w.done ? '✓' : '○'}</span><span class="lbl">${esc(label)} ${w.platform ? `<span class="tag">${P.platformWish}</span>` : ''}</span><span class="bar"><i style="width:${pct}%"></i></span></div>`;
         }
-        h += `<div class="btns"><button data-cmd="game">${G.play}</button><button data-cmd="care">${T.care.feed} / ${T.care.water}</button></div>`;
+        const bst = (k) => status['btn:' + k] || { text: '', cls: '' };
+        h += `<div class="btns"><button type="button" data-cmd="game" data-key="btn:game" class="${bst('game').cls === 'busy' ? 'busy' : ''}">${G.play}</button><button type="button" data-cmd="care" data-key="btn:care" class="${bst('care').cls === 'busy' ? 'busy' : ''}">${T.care.feed} / ${T.care.water}</button><span class="st ${bst('game').cls}">${esc(bst('game').text || bst('care').text)}</span></div>`;
         h += `<p class="hint">${G.coinsHint}。${s.sulk ? G.sulkStart : ''}</p>`;
       } else if (tab === 'finds') {
         const seen = new Map(); for (const f of s.finds) seen.set(f.id, (seen.get(f.id) || 0) + 1);
@@ -123,20 +281,42 @@
         }
         h += `<p class="hint">${P.hint}</p>`;
       }
-      body.innerHTML = h;
-      body.querySelectorAll('button[data-cmd]').forEach(b => b.onclick = () => emit('panel-cmd', { cmd: b.dataset.cmd }));
-      document.title = `${pet.name || 'Kapi'} · ${P.title}`;
+      if (h === lastHtml && !force) { document.title = `${name} · ${P.title}`; return; }   // the 2 s refresh only touches the DOM when something changed (keeps focus, saves CPU)
+      const focusKey = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.key : '';
+      lastHtml = h; body.innerHTML = h;
+      body.querySelectorAll('[data-cmd]').forEach(b => b.onclick = () => send(b.dataset.key, { cmd: b.dataset.cmd }));
+      body.querySelectorAll('.card.can').forEach(c => {
+        const fire = () => activate(c.dataset.kind, c.dataset.id, c.dataset.key);
+        c.onclick = fire;
+        c.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fire(); } };
+        c.ondblclick = (e) => e.preventDefault();
+      });
+      body.querySelectorAll('.sw[data-sw="look"]').forEach(b => { b.onclick = () => toggleLook(b); });
+      if (focusKey && body.querySelector) { const again = body.querySelector(`[data-key="${focusKey}"]`); if (again && again.focus) again.focus(); }
+      document.title = `${name} · ${P.title}`;
     }
-    window.__panel = { setTab: (t) => { tab = t; render(); }, body: () => document.getElementById('body').innerHTML, open: (d, l) => open(d, l) };   // tests
+    function activate(kind, id, key) {
+      if (pending) return;                                            // performing: ignore (the card already says so)
+      if (kind === 'play' || kind === 'walk') send(key, { cmd: 'play', action: id });
+      else if (kind === 'expr') send(key, { cmd: 'expr', name: id });
+      else if (kind === 'voice') send(key, { cmd: 'voice' });
+    }
+    function toggleLook(btn) {
+      if (pending) return; const next = !lookState(); lookOn = next;   // optimistic; the ack (or a failed one) settles it
+      btn.setAttribute('aria-checked', String(next)); const lbl = btn.querySelector && btn.querySelector('span:last-child'); if (lbl) lbl.textContent = next ? P.switchOn : P.switchOff;
+      send('look:look', { cmd: 'lookFollow', on: next });
+    }
+    window.__panel = { setTab: (t) => { tab = t; render(true); }, body: () => $('body').innerHTML, open: (d, l) => open(d, l), activate, toggleLook: () => toggleLook({ setAttribute: () => {} }), ack: onAck, pending: () => pending, status: (k) => status[k] || null };   // tests
     async function open(d, l) {
-      setDir(d, l);
+      setDir(d, l); lastHtml = ''; lookOn = null;
       const ok = await load();
-      if (ok) render();
-      try { await emit('notebook-loaded', { ok, error: ok ? '' : document.getElementById('body').textContent, dir }); } catch (_) {}
+      if (ok) render(true);
+      try { await emit('notebook-loaded', { ok, error: ok ? '' : $('body').textContent, dir }); } catch (_) {}
     }
     try { await listen('notebook-open', (e) => { const p = e.payload || {}; if (p.dir) open(p.dir, p.lang); }); } catch (_) {}
+    try { await listen('panel-ack', (e) => onAck(e.payload || {})); } catch (_) {}
     try { await emit('notebook-ready', { dir: dir || '' }); } catch (_) {}
-    if (dir) { setDir(dir, lang); await open(dir, lang); } else document.getElementById('body').textContent = '…';
+    if (dir) { setDir(dir, lang); await open(dir, lang); } else $('body').textContent = '…';
     setInterval(async () => { if (dir && await load()) render(); }, 2000);
   })();
   </script>

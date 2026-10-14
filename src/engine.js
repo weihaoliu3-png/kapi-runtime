@@ -63,7 +63,7 @@
 
     // ---------- public API used by main.js ----------
     /** 0.8.16: look along `dirs` (['d270','d225','base', …]) holding each `holdSec`; the cursor coming near cancels it. */
-    lookAlong(dirs, holdSec) { if (this.sleeping || !this.img.look) return false; this.lookScript = { dirs: dirs.slice(), i: 0, next: this.now() + (holdSec || 0.9), hold: holdSec || 0.9 }; return true; }
+    lookAlong(dirs, holdSec) { if (this.sleeping || !this.img.look || this.lookEnabled === false) return false; this.lookScript = { dirs: dirs.slice(), i: 0, next: this.now() + (holdSec || 0.9), hold: holdSec || 0.9 }; return true; }
     _scriptedVector(dx, dy, lf) {
       const sc = this.lookScript; if (!sc) return null;
       const rr = lf.radiusPx || 600; const t = this.now();
@@ -75,6 +75,7 @@
       const a = k * Math.PI / 4; return { dx: Math.sin(a) * rr * 0.4, dy: -Math.cos(a) * rr * 0.4 };
     }
     setLookVector(dx, dy) {
+      if (this.lookEnabled === false) return;
       const lf = this.m.lookFollow || {};
       const sv = this._scriptedVector(dx, dy, lf); if (sv) { dx = sv.dx; dy = sv.dy; }
       if (lf.mode === 'ring') return this._setLookRing(dx, dy, lf);
@@ -143,6 +144,9 @@
     play(id, prio) {
       if (id === 'stagger' && !this.m.actions.stagger) this.m.actions.stagger = { type: 'procedural', preset: 'stagger' };   // runtime-only, never in a pack
       const a = this.m.actions[id]; if (!a) return false;
+      // 0.9.4: a cycle action (walk) is locomotion — only the movement state machine (setWalking) may start it, so the
+      // window always moves while the legs do. idleRandom / lifeAct / rules / menus asking for it get a refusal (logged once).
+      if (a.cycle && !this._walkPlay) { this._logOnce('cycle-refused ' + id + ' (only the walk state machine plays a cycle action)'); return false; }
       const p = prio ?? PRIORITY.user;
       if (p < this.state.prio && !this._finished()) return false;
       this.transitionFrom = this._currentImage(); this.transitionT0 = this.now();
@@ -240,9 +244,21 @@
     hasWalkCycle() { const a = this.m.actions.walk; return !!(a && a.type === 'frames' && a.cycle); }
     setWalking(on) {
       this.walking = !!on;
-      if (!this.hasWalkCycle() || this.sleeping || this.drag.active) return;
-      if (on && this.state.action !== 'walk' && (this.state.action === 'idle' || this._finished())) this.play('walk', PRIORITY.random + 1);
+      if (!this.hasWalkCycle() || this.sleeping || this.drag.active) { if (!on && this.state.action === 'walk') this._toIdle(); return; }
+      if (on && this.state.action !== 'walk' && (this.state.action === 'idle' || this._finished())) { this._walkPlay = true; try { this.play('walk', PRIORITY.random + 1); } finally { this._walkPlay = false; } }
       if (!on && this.state.action === 'walk') this._toIdle();
+    }
+    /** The frames of a walk cycle face `actions.walk.facing` ("right" by default): mirror when moving against it. */
+    walkFlip(movingLeft) {
+      const a = this.m.actions.walk; const facing = (a && a.facing === 'left') ? 'left' : 'right';
+      return facing === 'left' ? !movingLeft : !!movingLeft;
+    }
+    _logOnce(line) { this._logged = this._logged || {}; if (this._logged[line]) return; this._logged[line] = 1; if (this.opts.onLog) { try { this.opts.onLog(line); } catch (_) {} } }
+    /** 0.9.4 look-follow switch (settings.lookFollow): off = base frame, no direction frames, no scripted glances; the
+     *  package config stays in place so switching back on restores it without a reload. Blinks / expressions / actions untouched. */
+    setLookEnabled(on) {
+      this.lookEnabled = on !== false;
+      if (!this.lookEnabled) { this.lookScript = null; this.look.fadeFrom = null; this.look.current = this.look.target = 'base'; this.look.sectorIdx = -1; this.lookVec = null; this._lv = null; }
     }
 
     // ---------- tick ----------
@@ -276,7 +292,11 @@
       const tr = this.m.triggers;
       if (s.action === 'idle' && !this.sleeping && !this.drag.active && t - this.lastRandom > this.nextRandomIn && !this.hover) {
         this.lastRandom = t; this.nextRandomIn = this._randIn();
-        const pool = (tr.idleRandom || []).filter(x => this.m.actions[x.action] && (!this.cooldown[x.action] || t - this.cooldown[x.action] > (x.cooldownSec || 0)));
+        const pool = (tr.idleRandom || []).filter(x => {
+          const a = this.m.actions[x.action]; if (!a) return false;
+          if (a.cycle) { this._logOnce('idle-random skipped ' + x.action + ' (cycle action: walking is the movement state machine\'s job)'); return false; }   // 0.9.4
+          return !this.cooldown[x.action] || t - this.cooldown[x.action] > (x.cooldownSec || 0);
+        });
         const total = pool.reduce((q, x) => q + (x.weight || 1), 0);
         let r = Math.random() * total;
         for (const x of pool) { r -= (x.weight || 1); if (r <= 0) { this.cooldown[x.action] = t; this.play(x.action, PRIORITY.random); break; } }
@@ -393,5 +413,9 @@
   }
 
   global.PetEngine = PetEngine;
-  global.PET_PRIORITY = PRIORITY; global.PET_DIRS = DIRS; global.PET_LIFE_PRESETS = LIFE_PRESETS;
+  // 0.9.5: breathe / sway / slump / dragWiggle / stagger are STATES (idle, dragging, asleep, dizzy), not tricks you can
+  // ask for. One list, used by main.js (panel-cmd / menu) and panel.html (which cards are clickable) — never copied by hand.
+  const NOT_TRICKS = ['breathe', 'sway', 'slump', 'dragWiggle', 'stagger', 'typing'];
+  global.PET_PRIORITY = PRIORITY; global.PET_DIRS = DIRS; global.PET_LIFE_PRESETS = LIFE_PRESETS; global.PET_PROCEDURAL = Object.keys(PROCEDURAL);
+  global.PET_PERFORMABLE = Object.keys(PROCEDURAL).filter((x) => !NOT_TRICKS.includes(x));
 })(typeof window !== 'undefined' ? window : globalThis);

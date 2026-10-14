@@ -18,8 +18,16 @@
       this.h = host; this.mode = 'idle'; // idle | fly | cling | peek | walk | perch
       this.v = { x: 0, y: 0 }; this.target = null; this.flip = false; this.lastPerchRect = null;
       this.typing = { count: 0, lastNod: 0, fastStreak: 0, lastBurst: -Infinity, lastTick: 0 }; this.lastLowBattery = 0; this.lastGreet = {};
-      this.wanderAt = performance.now() / 1000 + 90 + Math.random() * 120; this.clingUntil = 0;
+      this.wanderAt = performance.now() / 1000 + 60 + Math.random() * 90; this.clingUntil = 0;
       this.lifeAt = performance.now() / 1000 + 12 + Math.random() * 15; this.lastLife = '';
+      this.lastRegion = ''; this._logAt = {};                                 // 0.9.4: wander regions + throttled diagnostics
+    }
+    /** Diagnostic line to the host log (kapi-debug.log); `everySec` > 0 throttles repeats of the same line. */
+    _log(line, everySec) {
+      if (!this.h.log) return;
+      const t = performance.now() / 1000; const key = everySec ? line.split(' ').slice(0, 2).join(' ') : null;
+      if (key) { if (t - (this._logAt[key] || -1e9) < everySec) return; this._logAt[key] = t; }
+      try { this.h.log(line); } catch (_) {}
     }
 
     // ---------- 0.8.16 desktop awareness: the user clicking around the screen ----------
@@ -40,6 +48,18 @@
     }
 
     // ---------- 0.8.16 idle life: something small every 15-45 s so the pet never sits like a sticker ----------
+    /** Why an idle act / stroll must wait right now (null = free): bubble | panel | hover | sleep | drag | busy | lookScript */
+    _blocked() {
+      const e = this.h.engine;
+      if (e.sleeping) return 'sleep';
+      if (e.drag && e.drag.active) return 'drag';
+      if (e.hover) return 'hover';
+      const why = this.h.busyWhy ? this.h.busyWhy() : ((this.h.busy && this.h.busy()) ? 'bubble' : null);
+      if (why) return why;
+      if (e.state.action !== 'idle') return 'busy';
+      if (e.lookScript) return 'lookScript';
+      return null;
+    }
     _lifeInterval() {
       const mood = this.h.mood ? this.h.mood() : 70;                        // 0..100; a happy pet fidgets more
       const k = 1.6 - Math.max(0, Math.min(100, mood)) / 100 * 0.8;           // 0.8x (mood 100) .. 1.6x (mood 0)
@@ -48,7 +68,7 @@
     lifeAct() {
       const e = this.h.engine; const m = (e.m && e.m.actions) || {};
       const dirs = global.PET_DIRS || ['d000', 'd045', 'd090', 'd135', 'd180', 'd225', 'd270', 'd315'];
-      const learned = Object.keys(m).filter(id => m[id].type === 'frames' && !['eat', 'drink', 'sleep', 'typing', 'walk', 'groom'].includes(id));
+      const learned = Object.keys(m).filter(id => m[id].type === 'frames' && !m[id].cycle && !['eat', 'drink', 'sleep', 'typing', 'walk', 'groom'].includes(id));   // a cycle (walk) is never a "learned" trick: it only plays while the window moves
       const groom = m.groom && m.groom.type === 'frames';
       const menu = [
         ['lookAround', 24], ['glance', 12], ['stretch', 12], ['tilt', 12], ['wander', 12], ['yawn', 7], ['shiver', 5], ['hop', 5], ['settle', 6], ['learned', learned.length ? 8 : 0],
@@ -95,13 +115,44 @@
     unpeek() { if (this.mode !== 'peek') return; const m = this.h.getMonitor(), w = this.h.getWin(); this.target = { x: Math.min(Math.max(w.x, m.x), m.x + m.w - w.w), y: w.y }; this.mode = 'walk'; }
 
     // ---------- walk ----------
-    walkTo(x, y) { const w = this.h.getWin(); this.target = { x, y: y ?? w.y }; this.flip = x < w.x; this.mode = 'walk'; }
+    walkTo(x, y) {
+      const w = this.h.getWin(); if (!w) return false;
+      this.target = { x, y: y ?? w.y }; this.flip = x < w.x; this.mode = 'walk';
+      this._log(`walk-start ${Math.round(w.x)},${Math.round(w.y)} -> ${Math.round(this.target.x)},${Math.round(this.target.y)}`);
+      return true;
+    }
+    /** End a walk before arrival (click, drag, panel, sleep, a failed window move). why: interrupted | failed */
+    stopWalk(why) {
+      if (this.mode !== 'walk') return false;
+      this.mode = 'idle'; this.target = null; this._log('walk-end ' + (why || 'interrupted')); return true;
+    }
     comeHere() { const c = this.h.getCursor(), w = this.h.getWin(); if (!c || !w) return; this.walkTo(c.x - w.w / 2, w.y); this.h.say(this.h.line('comeHere') || this.h.t().beh.coming); }
+    /** The whole work area (minus the window and an 8 px margin), in three regions; never the region it is in /
+     *  went to last time, and at least one window width away when the screen allows it. y is kept inside the work area. */
     wander() {
-      const w = this.h.getWin(), m = this.h.getMonitor(); if (!w || !m) return;
+      const w = this.h.getWin(), m = this.h.getMonitor(); if (!w || !m) return false;
       const real = this.h.engine.hasWalkCycle && this.h.engine.hasWalkCycle();
-      const dx = (Math.random() < 0.5 ? -1 : 1) * (real ? 150 + Math.random() * 350 : 80 + Math.random() * 160);   // a real walker goes farther
-      this.walkTo(Math.min(Math.max(w.x + dx, m.x), m.x + m.w - w.w), w.y);
+      const MARGIN = 8;
+      const lo = m.x + MARGIN, hi = m.x + m.w - w.w - MARGIN;
+      const y = Math.min(Math.max(w.y, m.y), Math.max(m.y, m.y + m.h - w.h));
+      if (hi <= lo) return this.walkTo(Math.min(Math.max(w.x, m.x), m.x + m.w - w.w), y);   // window wider than the screen: just stay on it
+      if (!real) {                                                                            // no walk frames: the old short bobbing stroll
+        const dx = (Math.random() < 0.5 ? -1 : 1) * (80 + Math.random() * 160);
+        return this.walkTo(Math.min(Math.max(w.x + dx, lo), hi), y);
+      }
+      const span = hi - lo, third = span / 3;
+      const regions = { left: [lo, lo + third], centre: [lo + third, lo + 2 * third], right: [lo + 2 * third, hi] };
+      const here = w.x < lo + third ? 'left' : w.x < lo + 2 * third ? 'centre' : 'right';
+      let names = Object.keys(regions).filter(n => n !== this.lastRegion && n !== here);
+      if (!names.length) names = Object.keys(regions).filter(n => n !== here);
+      const pick = names[Math.floor(Math.random() * names.length)];
+      const [a, b] = regions[pick]; let x = a + Math.random() * (b - a);
+      if (Math.abs(x - w.x) < w.w) {                                                           // too close: push to the far side of that region, else as far as the screen allows
+        const far = Math.abs(a - w.x) > Math.abs(b - w.x) ? a : b;
+        x = Math.abs(far - w.x) >= w.w ? far : (w.x - lo > hi - w.x ? lo : hi);
+      }
+      this.lastRegion = pick;
+      return this.walkTo(Math.round(Math.min(Math.max(x, lo), hi)), y);
     }
 
     // ---------- follow the cursor ----------
@@ -155,31 +206,35 @@
       if (this.typing.fastStreak >= 2 && t - this.typing.lastBurst >= 8 && !this.h.engine.sleeping) {
         this.typing.lastBurst = t;
         this.h.expr('surprised', 1200);
-        this.h.play('shake'); if (this.h.react) this.h.react('surprise');
-        const line = this.h.line('typingFast'); if (line) this.h.say(line);
+        // every voice below is typing-sourced (0.9.4): the host's typing gate lets one real voice through per cooldown
+        this.h.play('shake'); if (this.h.react) this.h.react('surprise', undefined, 'typing'); if (this.h.event) this.h.event('typingFast');
+        const line = this.h.line('typingFast'); if (line) this.h.say(line, false, { source: 'typing' });
       }
       // One detected press is enough: the 80ms global-input poll can miss fast press/release pairs.
       // The engine supplies a visible procedural typing nod when the pet has no dedicated typing action.
       if (keys > 0 && t - this.typing.lastNod >= 1.5 && !this.h.engine.sleeping && this.h.engine.state.action === 'idle') {
         const acts = (this.h.engine.m && this.h.engine.m.actions) || {};
         const action = acts.typing ? 'typing' : (acts.nod ? 'nod' : null);
-        if (action && this.h.engine.play(action, global.PET_PRIORITY.random)) { this.typing.lastNod = t; if (this.h.react) this.h.react('typing', 0.28); }   // 0.8.15: a soft note with every nod
+        if (action && this.h.engine.play(action, global.PET_PRIORITY.random)) { this.typing.lastNod = t; if (this.h.react) this.h.react('typing', 0.28, 'typing'); }   // 0.8.15: a soft note with every nod
       }
-      if (this.typing.count > 400) { this.typing.count = 0; this.h.say(this.h.line('typingLong') || this.h.t().beh.typingLong); }
+      if (this.typing.count > 400) { this.typing.count = 0; this.h.say(this.h.line('typingLong') || this.h.t().beh.typingLong, false, { source: 'typing' }); if (this.h.event) this.h.event('typingLong'); }
     }
     onBattery(info) {
       if (!info) return; const t = performance.now() / 1000;
-      if (info.percent <= 20 && !info.charging && t - this.lastLowBattery > 900) { this.lastLowBattery = t; this.h.expr('surprised', 2500); if (this.h.react) this.h.react('whine'); this.h.say((this.h.line('lowBattery') || this.h.t().beh.lowBattery).replace('{p}', Math.round(info.percent)), true); }
+      if (info.percent <= 20 && !info.charging && t - this.lastLowBattery > 900) { this.lastLowBattery = t; this.h.expr('surprised', 2500); if (this.h.react) this.h.react('whine'); if (this.h.event) this.h.event('lowBattery', { percent: info.percent }); this.h.say((this.h.line('lowBattery') || this.h.t().beh.lowBattery).replace('{p}', Math.round(info.percent)), true); }
     }
     onOtherPet(id, rect, name) {
       const w = this.h.getWin(); if (!w || !rect) return;
       const overlap = !(rect.x > w.x + w.w || rect.x + rect.w < w.x); const t = performance.now() / 1000;
-      if (overlap && t - (this.lastGreet[id] || -1e9) > 300) { this.lastGreet[id] = t; this.h.expr('happy', 2500); if (this.h.react) this.h.react('greet'); this.h.say((this.h.line('greet') || this.h.t().beh.greet).replace('{name}', name || '')); this.h.play('wave'); }
+      if (overlap && t - (this.lastGreet[id] || -1e9) > 300) { this.lastGreet[id] = t; this.h.expr('happy', 2500); if (this.h.react) this.h.react('greet'); if (this.h.event) this.h.event('greet', { name }); this.h.say((this.h.line('greet') || this.h.t().beh.greet).replace('{name}', name || '')); this.h.play('wave'); }
     }
 
     // ---------- per-frame motion; returns {x,y,rot,flip} or null when nothing to move ----------
     step(dt) {
-      const w = this.h.getWin(), m = this.h.getMonitor(); if (!w || !m) return null;
+      const w = this.h.getWin(), m = this.h.getMonitor();
+      if (!w || !m) { this._log('idle-skipped norect', 60); return null; }           // 0.9.4: no window / monitor rect yet — say so once a minute instead of sitting silently
+      const eng = this.h.engine;
+      if (this.mode === 'walk' && (eng.sleeping || (eng.drag && eng.drag.active))) this.stopWalk('interrupted');   // a walk never survives sleep or a hand
       if (this.follow && this.mode === 'idle' && !this.h.engine.hover && !this.h.engine.sleeping) { const r = this._followStep(dt); if (r) return r; }
       if (this.mode === 'fly') {
         this.v.y += GRAVITY * dt; let x = w.x + this.v.x * dt, y = w.y + this.v.y * dt;
@@ -197,19 +252,27 @@
         if (!this.target) { this.mode = this.mode === 'perch' ? 'perch' : 'idle'; return null; }
         const dx = this.target.x - w.x, dy = this.target.y - w.y; const dist = Math.hypot(dx, dy);
         const sp = (this.mode === 'peek' ? 260 : WALK_SPEED) * dt;
-        if (dist <= sp) { const t = this.target; this.target = null; const done = this.mode; if (this.mode === 'walk') this.mode = 'idle'; this._perchMove = false; return { x: t.x, y: t.y, rot: 0, flip: this.flip, arrived: done }; }
+        if (dist <= sp) { const t = this.target; this.target = null; const done = this.mode; if (this.mode === 'walk') { this.mode = 'idle'; this._log('walk-end arrived'); } this._perchMove = false; return { x: t.x, y: t.y, rot: 0, flip: this.flip, arrived: done }; }
         const bob = (this.h.engine.hasWalkCycle && this.h.engine.hasWalkCycle()) ? 0 : Math.sin(performance.now() / 90) * 3;   // real frames carry their own motion
         return { x: w.x + dx / dist * sp, y: w.y + dy / dist * sp + (this.mode === 'walk' ? bob : 0), rot: 0, flip: this.flip, walking: true };
       }
+      // 0.8.16 idle life + 0.9.2 strolls are BUILT IN: they do not depend on pet.json.triggers.idleRandom (an empty pool
+      // only means "no extra custom moves"). Every skip is logged with its reason so a silent desktop can be diagnosed.
       if (this.mode === 'idle' && performance.now() / 1000 > this.lifeAt) {
-        const t = performance.now() / 1000; this.lifeAt = t + this._lifeInterval();
-        const e = this.h.engine;
-        if (!e.hover && e.state.action === 'idle' && !e.sleeping && !e.drag.active && !(this.h.busy && this.h.busy()) && !e.lookScript) this.lifeAct();
+        const t = performance.now() / 1000; const delay = this._lifeInterval(); this.lifeAt = t + delay;
+        const why = this._blocked();
+        if (why) this._log('idle-skipped ' + why, 20);
+        else { const pick = this.lifeAct(); this._log(`idle-scheduled ${pick} ${Math.round(delay)}`); }
       }
       if (this.mode === 'idle' && performance.now() / 1000 > this.wanderAt) {
         const real = this.h.engine.hasWalkCycle && this.h.engine.hasWalkCycle();
-        this.wanderAt = performance.now() / 1000 + (real ? 60 + Math.random() * 90 : 180 + Math.random() * 240);   // a pet that can really walk strolls every 1-2.5 min
-        if (!this.h.engine.hover && this.h.engine.state.action === 'idle' && !this.h.engine.sleeping && Math.random() < 0.5) this.wander();
+        const why = this._blocked();
+        if (why) { this.wanderAt = performance.now() / 1000 + 15 + Math.random() * 15; this._log('idle-skipped ' + why, 20); }   // blocked: try again soon, never give the slot up
+        else {
+          const delay = real ? 60 + Math.random() * 90 : 180 + Math.random() * 240;   // a pet that can really walk strolls every 1-2.5 min
+          this.wanderAt = performance.now() / 1000 + delay;
+          if (real || Math.random() < 0.5) { if (this.wander()) this._log(`idle-scheduled wander ${Math.round(delay)}`); }
+        }
       }
       // edge cling: pet mostly off-screen after a drag
       if (this.mode === 'cling') {
@@ -226,5 +289,51 @@
     }
   }
 
-  global.Behaviors = Behaviors;
+  // ---------------------------------------------------------------- stroking, in three tiers (0.9.4)
+  // One "round" = one press-and-hold on the pet. The count is the number of direction reversals in that hold where the
+  // leg before AND the leg after the turn each travelled >= minTravel px (so hand jitter and high-DPI noise never count).
+  //   3 reversals -> 'light'   (a brief shy look / tiny sparkle: no heart, no growth, no voice)
+  //  10 reversals -> 'medium'  (shy -> happy once)
+  //  15 reversals -> 'heart'   (the heart effect + the `pet` growth event + line / voice), then the round is locked
+  // Each tier fires once per round. Release, > graceSec off the opaque pixels, a drag or Ctrl ends the round.
+  class StrokeTracker {
+    constructor(opts) {
+      opts = opts || {};
+      this.minTravel = opts.minTravel || 20; this.graceSec = opts.graceSec || 1;
+      this.tiers = Object.assign({ light: 3, medium: 10, heart: 15 }, opts.tiers || {});
+      this.round = null;
+    }
+    get active() { return !!this.round; }
+    get count() { return this.round ? this.round.count : 0; }
+    /** The mouse went down on the pet at window x. */
+    press(x, t) { this.round = { x0: x, segStart: x, far: x, dir: 0, count: 0, fired: {}, lastOver: t, locked: false, legs: 0 }; }
+    /** The hand let go / a drag began / Ctrl went down: the round is over, nothing fires. */
+    end() { const r = this.round; this.round = null; return r ? r.count : 0; }
+    /** A cursor sample while pressed: x in window px, `over` = on opaque pet pixels, `ctrl` = whip modifier held.
+     *  Returns 'light' | 'medium' | 'heart' the moment a tier is reached, else null. */
+    move(x, t, over, ctrl) {
+      const r = this.round; if (!r) return null;
+      if (ctrl) { this.end(); return null; }
+      if (over) r.lastOver = t; else if (t - r.lastOver > this.graceSec) { this.end(); return null; }
+      if (r.dir === 0) {                                                        // first leg: becomes a direction once it is long enough
+        if (Math.abs(x - r.segStart) >= this.minTravel) { r.dir = Math.sign(x - r.segStart); r.far = x; r.legs = 1; }
+        return null;
+      }
+      if (Math.sign(x - r.far) === r.dir) { r.far = x; return null; }            // still going the same way: extend the leg
+      if (Math.abs(x - r.far) < this.minTravel) return null;                     // a wobble back, not a reversal yet
+      r.dir = -r.dir; r.segStart = r.far; r.far = x; r.legs++; r.count++;        // a real turn, both legs >= minTravel
+      if (r.locked) return null;
+      for (const tier of ['heart', 'medium', 'light']) {
+        if (r.count >= this.tiers[tier] && !r.fired[tier]) {
+          r.fired[tier] = true; if (tier === 'heart') r.locked = true;
+          return tier;
+        }
+      }
+      return null;
+    }
+    /** Current leg length (px) in the running direction — the host uses it to tell a stroke from a drag. */
+    legTravel() { const r = this.round; return r && r.dir ? Math.abs(r.far - r.segStart) : 0; }
+  }
+
+  global.Behaviors = Behaviors; global.StrokeTracker = StrokeTracker;
 })(typeof window !== 'undefined' ? window : globalThis);

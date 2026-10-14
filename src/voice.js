@@ -399,5 +399,24 @@
     return (voiceIndex && Object.keys(voiceIndex).length) ? 'tts' : 'babble';
   }
 
-  global.KapiVoice = { PRESETS, SPECIES, SFX, REACTION_KINDS, planBabble, renderBabble, voiceKind, syllableUnits, planHit, planReaction, planAnimal, whipCrack, sfx, loadBank, playAnimal, pickRecordings, POOL };
+  // ---------------------------------------------------------------- typing voice cooldown (0.9.4)
+  // Every real voice that a typing event causes — the fast-typing startle, the "that's a lot of typing" line, the garden's
+  // bud / bloom / pick lines, rule `typing*` steps and the soft per-nod "mrp" — goes through ONE gate: at most one real
+  // voice per `cooldownSec` (pet.json.voice.cooldowns.typingSec, default 60). Bubbles, nods and flowers are untouched;
+  // only the clip / synth is skipped. In-process only; the host does not call allow() while muted, so the mute switch
+  // never counts as "played".
+  const TYPING_COOLDOWN_SEC = 60;
+  function typingCooldownSec(manifest) {
+    const c = (((manifest && manifest.voice) || {}).cooldowns || {}).typingSec;
+    return Number.isFinite(c) && c >= 0 ? c : TYPING_COOLDOWN_SEC;
+  }
+  class TypingGate {
+    constructor(cooldownSec) { this.cooldownSec = cooldownSec == null ? TYPING_COOLDOWN_SEC : cooldownSec; this.lastAt = -Infinity; this.skipped = 0; }
+    /** true when a typing-sourced voice may play now (and records it as played); false while cooling down. */
+    allow(nowSec) { if (nowSec - this.lastAt < this.cooldownSec) { this.skipped++; return false; } this.lastAt = nowSec; return true; }
+    remaining(nowSec) { return Math.max(0, this.cooldownSec - (nowSec - this.lastAt)); }
+  }
+
+  global.KapiVoice = { PRESETS, SPECIES, SFX, REACTION_KINDS, planBabble, renderBabble, voiceKind, syllableUnits, planHit, planReaction, planAnimal, whipCrack, sfx, loadBank, playAnimal, pickRecordings, POOL,
+                       TypingGate, typingCooldownSec, TYPING_COOLDOWN_SEC };
 })(typeof window !== 'undefined' ? window : globalThis);

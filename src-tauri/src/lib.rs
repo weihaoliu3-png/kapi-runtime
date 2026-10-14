@@ -18,6 +18,31 @@ pub struct PetInfo {
     pub dir: String,
 }
 
+/// Where this copy is running from, and whether macOS moved it (0.9.5). An unsigned, quarantined .app opened straight
+/// from Downloads is run by Gatekeeper from a random READ-ONLY path (App Translocation), so the `pets/` folder next to
+/// the .app is invisible and the pet "disappears". We cannot undo that from inside the app — but we can say so.
+#[derive(Serialize, Clone)]
+pub struct LaunchInfo {
+    #[serde(rename = "exeDir")]
+    pub exe_dir: String,
+    pub folder: String,
+    pub translocated: bool,
+    pub roots: Vec<String>,
+}
+
+#[tauri::command]
+fn launch_info(app: AppHandle) -> LaunchInfo {
+    let exe = std::env::current_exe().unwrap_or_default();
+    let exe_dir = exe.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+    let translocated = exe_dir.contains("AppTranslocation");
+    LaunchInfo {
+        exe_dir,
+        folder: exe_folder().to_string_lossy().to_string(),
+        translocated,
+        roots: pets_roots(&app).iter().map(|p| p.to_string_lossy().to_string()).collect(),
+    }
+}
+
 fn pets_roots(app: &AppHandle) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
@@ -463,7 +488,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             list_pets, read_text, read_file_b64, write_text, settings_path, bundle_info, import_pet, export_pet,
-            active_window, battery_status, peer_pets, open_panel_window, close_panel_window, request_input_permission, input_watcher_state
+            active_window, battery_status, peer_pets, open_panel_window, close_panel_window, request_input_permission, input_watcher_state, launch_info
         ])
         .setup(|app| {
             let show = MenuItem::with_id(app, "toggle", "显示 / 隐藏", true, None::<&str>)?;

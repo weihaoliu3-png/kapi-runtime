@@ -199,6 +199,53 @@
     }
   }
 
-  global.Growth = Growth;
-  global.GROWTH_DEFS = { WISH_POOL, FINDS, FIND_PAGE, CHAPTERS, FIND_MIN_ABSENT, SULK_AFTER_SEC, SULK_STROKES };
+  // ---- catch the light (0.9.4): one duration for the countdown, the settlement, the wish and the restart ----
+  // pet.json.catchLight = { durationSec: 10 (5..60), action: "<id>" } — both optional. The score target scales with the
+  // duration (20 s used to need 15 points, so 10 s needs 8) and is what the "want to learn …" prompt waits for.
+  // The lunge is species-adapted: explicit catchLight.action → the species' own list → `jump`; whatever is chosen must exist.
+  const CATCH_DEFAULT_SEC = 10, CATCH_MIN_SEC = 5, CATCH_MAX_SEC = 60, CATCH_BASE = { points: 15, sec: 20 };
+  const CATCH_ACTIONS = {
+    cat: ['pounce'], kitten: ['pounce'],
+    dog: ['pounce', 'chase', 'jump'], 'dog-small': ['pounce', 'chase', 'jump'], 'dog-large': ['pounce', 'chase', 'jump'],
+    bird: ['peck', 'hop', 'jump'], rabbit: ['hop', 'jump'], rodent: ['dash', 'pounce', 'jump'],
+    human: ['reach', 'tap', 'jump'], cartoon: ['reach', 'tap', 'jump'],
+  };
+  // which "want to learn" line (i18n growth.game.<key>) a species gets when it reaches the target without the move; null = no prompt
+  const CATCH_LEARN = { cat: 'wantPounce', kitten: 'wantPounce', bird: 'wantPeck', human: 'wantTap', cartoon: 'wantTap' };
+  function catchSpecies(manifest) {
+    const m = manifest || {}; const v = m.voice || {};
+    if (typeof m.species === 'string' && m.species) return m.species;
+    if (typeof v.species === 'string' && v.species) return v.species;
+    if (v.preset === 'female' || v.preset === 'male' || v.kind === 'tts') return 'human';   // a person: recorded lines / a human timbre
+    return 'unknown';
+  }
+  function catchLightConfig(manifest) {
+    const m = manifest || {}; const cl = (m.catchLight && typeof m.catchLight === 'object') ? m.catchLight : {};
+    const acts = m.actions || {};
+    let durationSec = Number(cl.durationSec);
+    if (!Number.isFinite(durationSec)) durationSec = CATCH_DEFAULT_SEC;
+    durationSec = Math.min(CATCH_MAX_SEC, Math.max(CATCH_MIN_SEC, Math.round(durationSec)));
+    const species = catchSpecies(m);
+    const has = (id) => !!(id && acts[id]);
+    let action = null, source = 'fallback';
+    if (typeof cl.action === 'string' && has(cl.action)) { action = cl.action; source = 'package'; }
+    if (!action) for (const id of (CATCH_ACTIONS[species] || [])) if (has(id)) { action = id; source = 'species'; break; }
+    if (!action) action = 'jump';                                       // the engine always has a procedural jump
+    const target = Math.max(1, Math.round(CATCH_BASE.points * durationSec / CATCH_BASE.sec));
+    const learnKey = CATCH_LEARN[species] || null;
+    const learnId = learnKey === 'wantPounce' ? 'pounce' : learnKey === 'wantPeck' ? 'peck' : learnKey === 'wantTap' ? 'tap' : null;
+    return { durationSec, action, actionSource: source, target, species, learnKey: learnKey && !has(learnId) ? learnKey : null, learnId };
+  }
+  /** One round: starts at `nowSec`, `tick(now)` returns true exactly once when the duration is over. */
+  class CatchRound {
+    constructor(cfg, nowSec) { this.cfg = cfg; this.t0 = nowSec; this.score = 0; this.ended = false; }
+    elapsed(nowSec) { return Math.max(0, nowSec - this.t0); }
+    remaining(nowSec) { return Math.max(0, this.cfg.durationSec - this.elapsed(nowSec)); }
+    hit() { if (this.ended) return false; this.score += 1; return true; }
+    tick(nowSec) { if (this.ended) return false; if (this.elapsed(nowSec) >= this.cfg.durationSec) { this.ended = true; return true; } return false; }
+    reachedTarget() { return this.score >= this.cfg.target; }
+  }
+
+  global.Growth = Growth; global.CatchRound = CatchRound; global.catchLightConfig = catchLightConfig;
+  global.GROWTH_DEFS = { WISH_POOL, FINDS, FIND_PAGE, CHAPTERS, FIND_MIN_ABSENT, SULK_AFTER_SEC, SULK_STROKES, CATCH_DEFAULT_SEC, CATCH_MIN_SEC, CATCH_MAX_SEC, CATCH_ACTIONS, CATCH_LEARN };
 })(typeof window !== 'undefined' ? window : globalThis);

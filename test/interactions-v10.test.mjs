@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 const pet = JSON.parse(readFileSync(new URL('./fixtures/kapi-v11.pet.json', import.meta.url)));
 const mainSource = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
-assert.ok(mainSource.includes('if (overPet && !ctrlHeld)'), 'petting should work on any visible pet pixel');
+assert.ok(mainSource.includes('strokeTracker.move(lx, t, overPet, ctrlHeld)'), 'petting (0.9.4: press-and-hold) works on any visible pet pixel, never under Ctrl');
 assert.equal(pet.version, 11);
 assert.equal(pet.runtime.minVersion, '0.8.6');
 assert.equal(pet.actions.dragWiggle.preset, 'dragWiggle');

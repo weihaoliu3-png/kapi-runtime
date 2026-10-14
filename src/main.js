@@ -3,8 +3,8 @@
   'use strict';
   const TAURI = window.__TAURI__;
   const { invoke, convertFileSrc } = TAURI.core;
-  const { getCurrentWindow, cursorPosition, LogicalPosition, LogicalSize, currentMonitor } = TAURI.window;
-  const { listen } = TAURI.event;
+  const { getCurrentWindow, cursorPosition, LogicalPosition, LogicalSize, currentMonitor, monitorFromPoint, primaryMonitor, availableMonitors } = TAURI.window;
+  const { listen, emit } = TAURI.event;
   const win = getCurrentWindow();
 
   const canvas = document.getElementById('stage');
@@ -42,21 +42,57 @@
   // meet through the peer file exchange (peer_pets) used for greetings. No second window, no summon, no release.
   const peers = {};   // folder key -> {id, name, rect, t}
 
+  // 0.9.4: the monitor is resolved robustly. On Windows a transparent undecorated window can make currentMonitor()
+  // return null; with monRect never set the behaviours' step() returned null forever — no idle life, no strolls, rule
+  // walks refused ("the pet sits like a sticker" of the 团团 retro). Order: currentMonitor → monitorFromPoint (window
+  // centre) → primaryMonitor → availableMonitors()[0] → window.screen. The monitor's workArea (taskbar excluded) is
+  // used whenever the API gives it, so a stroll never ends under the taskbar.
+  let monSource = '', monLoggedKey = '', monMissingLogged = false;
+  function monToRect(mon, sf) {
+    const L = (v) => (v && typeof v.toLogical === 'function') ? v.toLogical(sf) : v;
+    const wa = mon.workArea && mon.workArea.position && mon.workArea.size ? mon.workArea : null;
+    const p = L(wa ? wa.position : mon.position), s = L(wa ? wa.size : mon.size);
+    if (!p || !s || !(s.width > 0) || !(s.height > 0)) return null;
+    return { x: p.x, y: p.y, w: s.width, h: s.height, workArea: !!wa };
+  }
+  async function resolveMonitor(sf) {
+    const attempts = [
+      ['current', () => currentMonitor()],
+      ['point', () => (monitorFromPoint && winRect) ? monitorFromPoint((winRect.x + winRect.w / 2) * sf, (winRect.y + winRect.h / 2) * sf) : null],
+      ['primary', () => primaryMonitor()],
+      ['available', async () => { const all = await availableMonitors(); return all && all[0]; }],
+    ];
+    for (const [name, get] of attempts) {
+      try { const mon = await get(); const r = mon ? monToRect(mon, sf) : null; if (r) return { name: name + (r.workArea ? '/workArea' : ''), rect: r }; } catch (_) {}
+    }
+    try {                                                                                   // last resort: the webview's own idea of the screen (CSS px = logical)
+      const sc = window.screen;
+      if (sc && sc.availWidth > 0 && sc.availHeight > 0) return { name: 'screen', rect: { x: sc.availLeft || 0, y: sc.availTop || 0, w: sc.availWidth, h: sc.availHeight } };
+    } catch (_) {}
+    return null;
+  }
   async function refreshRects() {
     try {
       const sf = await win.scaleFactor();
       const p = (await win.outerPosition()).toLogical(sf), sz = (await win.outerSize()).toLogical(sf);
       winRect = { x: p.x, y: p.y, w: sz.width, h: sz.height };
-      const mon = await currentMonitor();
-      if (mon) { const mp = mon.position.toLogical(sf), ms = mon.size.toLogical(sf); monRect = { x: mp.x, y: mp.y, w: ms.width, h: ms.height }; }
+      const got = await resolveMonitor(sf);
+      if (got) {
+        monRect = got.rect; monSource = got.name;
+        const key = `${got.name} ${Math.round(monRect.x)} ${Math.round(monRect.y)} ${Math.round(monRect.w)} ${Math.round(monRect.h)}`;
+        if (key !== monLoggedKey) { monLoggedKey = key; appendLog('monitor ' + key); }
+      } else if (!monMissingLogged) { monMissingLogged = true; appendLog('monitor missing'); }
     } catch (_) {}
   }
-  const stroke = { xs: [], lastT: 0 };
+  const strokeTracker = new StrokeTracker({ minTravel: 20, graceSec: 1 });
+  let strokeGlow = null;                                                 // {t0, level} tiny sparkle near the head after a light / medium tier
+  let typingGate = new KapiVoice.TypingGate();                           // 0.9.4: one real voice per typing cooldown (re-created per pet)
+  let ruleSource = null;                                                 // 'typing' while a typing* rule runs its steps
 
   const BASE_PAD_TOP = 130, PAD_SIDE = 90;      // 90: room for the +-16 deg swing while dragged (0.8.13)
   let PAD_TOP = BASE_PAD_TOP;
   let careWanted = false, careLayoutTask = Promise.resolve();
-  let settings = { scale: 1, activePetId: '', muted: false, alwaysOnTop: true };
+  let settings = { scale: 1, activePetId: '', muted: false, alwaysOnTop: true, lookFollow: true };   // 0.9.4: lookFollow (per Kapi folder, like the rest)
   let settingsFile = '';
   let pets = [], pet = null, engine = null, scale = 1, dispW = 0, dispH = 0, hidden = false;
   let lastCursor = null, lastCursorMove = 0, dragging = false, dragStartCursor = null, dragStartWin = null, dragMoved = false, mouseDownAt = 0;
@@ -130,22 +166,28 @@
     pet = { ...info, manifest, persona };
     T = I18N.pick(persona.language);
     await loadVoiceIndex();
+    typingGate = new KapiVoice.TypingGate(KapiVoice.typingCooldownSec(manifest));   // 0.9.4 pet.json.voice.cooldowns.typingSec (default 60)
+    strokeTracker.end(); strokeGlow = null;
     engine = new PetEngine({ manifest, persona, images }, {
       onSay: (text, sticky) => say(text, sticky),
       onAction: () => {},
       onStroke: () => { if (milestones) milestones.record('stroke'); if (growth) growth.record('stroke'); },
+      onLog: (line) => appendLog(line),
     });
+    engine.setLookEnabled(settings.lookFollow !== false);                 // 0.9.4 settings.lookFollow (default on)
     await setupCare();
     setupInteractions();
     await applyScale();
     await refreshRects();
     beh = new Behaviors({
       getWin: () => winRect, getMonitor: () => monRect, getCursor: () => cursorLogical, engine,
-      setWin: () => {}, say: (x, st) => say(x, st), expr: (n, ms) => engine.showExpression(n, ms),
+      setWin: () => {}, say: (x, st, opts) => say(x, st, opts), expr: (n, ms) => engine.showExpression(n, ms),
       play: (id) => { if (pet.manifest.actions[id]) engine.play(id); }, line: (k) => care.host.line(k), t,
-      react: (kind, vol) => reaction(kind, true, vol), sfx: (name, vol) => sound(name, vol),      // 0.8.15: every behaviour sounds
+      react: (kind, vol, source) => reaction(kind, true, vol, source), sfx: (name, vol) => sound(name, vol),      // 0.8.15: every behaviour sounds; 0.9.4: typing-sourced ones are gated
       mood: () => (care ? care.s.mood : 70), busy: () => bubble.style.display === 'block' || careEl.style.display === 'block',   // 0.8.16 idle life
+      busyWhy: () => bubble.style.display === 'block' ? 'bubble' : careEl.style.display === 'block' ? 'panel' : null,            // 0.9.4 idle-skipped <reason>
       event: (name, ctx) => fireRule(name, ctx),                                                   // 0.9.3 rules: typingFast / typingLong / lowBattery / greet
+      log: (line) => appendLog(line),                                                             // 0.9.4 idle-scheduled / idle-skipped / walk-start / walk-end
     });
     settings.activePetId = info.id; await saveSettings();
     greet();
@@ -201,8 +243,9 @@
     if (fxAbort) fxAbort.abort();
     fxQueue = new KapiFx.Queue((effect, m) => playEffect(effect, m));
     milestones = new Milestones(pet.manifest.milestones, { now, state: st, save, say: (k) => say(lineOr(k)), fire: (effect, m) => fxQueue.request(effect, m) });
-    garden = new Garden(pet.manifest.garden, { now, state: st, save, say: (k) => say(lineOr(k)), onPick: () => { milestones.record('flower'); if (growth) growth.record('flower'); },
-      sfx: (name, vol) => sound(name, vol), react: (kind) => reaction(kind, true) });
+    // the garden grows from typing, so its bud / bloom / pick lines are typing-sourced voices: bubble always, clip only past the typing gate (0.9.4)
+    garden = new Garden(pet.manifest.garden, { now, state: st, save, say: (k) => say(lineOr(k), false, { source: 'typing' }), onPick: () => { milestones.record('flower'); if (growth) growth.record('flower'); },
+      sfx: (name, vol) => sound(name, vol), react: (kind) => reaction(kind, true, undefined, 'typing') });
     // 0.9.0 growth: today's wishes, finds while away, the diary, sulking, chapters, catch-game records
     const G = T.growth;
     growth = new Growth(st, { now, save, manifest: pet.manifest, care, level: () => (care ? care.s.level : 1), t,
@@ -215,8 +258,8 @@
       react: (kind) => reaction(kind, true), sfx: (name, vol) => sound(name, vol), fire: (effect) => fxQueue.request(effect, { effect }) });
     rules = new KapiRules(pet.manifest.rules, {
       now, state: st, save, care: () => (care ? { mood: care.s.mood, level: care.s.level, sleeping: care.s.sleeping } : null), species: () => (pet.manifest.voice || {}).species || null,
-      play: (id) => { if (pet.manifest.actions[id]) engine.play(id, PET_PRIORITY.user); }, say: (t, sticky) => say(t, sticky), line: (k) => care.host.line(k),
-      expr: (n, ms) => engine.showExpression(n, ms), effect: (id) => fxQueue.request(id, { effect: id }), sound: (n) => sound(n, 0.45), react: (k) => reaction(k, true),
+      play: (id) => { if (pet.manifest.actions[id]) engine.play(id, PET_PRIORITY.user); }, say: (t, sticky) => say(t, sticky, ruleSource ? { source: ruleSource } : undefined), line: (k) => care.host.line(k),
+      expr: (n, ms) => engine.showExpression(n, ms), effect: (id) => fxQueue.request(id, { effect: id }), sound: (n) => sound(n, 0.45), react: (k) => reaction(k, true, undefined, ruleSource),
       look: (d) => engine.lookAlong([d, 'base'], 1.5), walk: (w) => ruleWalk(w), hide: () => beh && beh.peek(), come: () => beh && beh.comeHere(),
       mood: (d) => { if (care) { care.s.mood = Math.max(0, Math.min(100, care.s.mood + d)); care.host.save(care.s); } }, toast: (t) => toast(t, 4000),
     });
@@ -329,7 +372,7 @@
       .catch((e) => { careEl.style.visibility = ''; console.warn('top layout:', e); });
     return careLayoutTask;
   }
-  function openCare() { if (!care) return; care.renderPanel(careEl); careEl.style.visibility = 'hidden'; careEl.style.display = 'block'; return queueCareLayout(true); }
+  function openCare() { if (!care) return; if (beh) beh.stopWalk('interrupted'); care.renderPanel(careEl); careEl.style.visibility = 'hidden'; careEl.style.display = 'block'; return queueCareLayout(true); }
   function closeCare() { careEl.style.display = 'none'; careEl.style.visibility = ''; return queueCareLayout(false); }
   // ---- the space above the pet: one vertical stack (content top -> bubble), care card above all ----
   // contentOverhang: how far the drawn content (pet, flower on its head, props) reaches ABOVE the pad line, measured
@@ -371,8 +414,7 @@
       const sf = await win.scaleFactor();
       const oldPos = (await win.outerPosition()).toLogical(sf);
       const petTop = oldPos.y + PAD_TOP;
-      const mon = await currentMonitor();
-      const monitorTop = mon ? mon.position.toLogical(sf).y : -Infinity;
+      const monitorTop = monRect ? monRect.y : -Infinity;                     // 0.9.4: the resolved monitor (work area), never a null currentMonitor()
       if (newPad > PAD_TOP && CareLayout.blocked(petTop, newPad, monitorTop) && careEl.style.display !== 'block') {
         topBlocked = true;                                   // no room above: overlays go beside / below instead (positionBubble)
       } else {
@@ -418,6 +460,7 @@
       if (catchGame) { stepCatchGame(); drawCatchGame(); }
       drawFindOverlay();
       drawDizzyOverlay();
+      drawStrokeGlow();
       drawWhip();
       positionBubble();
     }
@@ -562,7 +605,20 @@
     if (dragging) {
       try {
         const nx = dragStartWin.x + (cp.x - dragStartCursor.x), ny = dragStartWin.y + (cp.y - dragStartCursor.y);
-        if (Math.hypot(cp.x - dragStartCursor.x, cp.y - dragStartCursor.y) > 4) dragMoved = true;
+        if (!dragMoved) {
+          // 0.9.4: pressed on the pet but not yet a drag — is the hand stroking (horizontal back-and-forth around the
+          // press point) or picking it up (a clear move away)? Strokes feed the three-tier tracker; a drag ends the round.
+          const inWin = lx >= 0 && ly >= 0 && lx < canvas.clientWidth && ly < canvas.clientHeight;
+          const overPet = inWin && petAlphaAt(lx, ly) > 25;
+          const tier = strokeTracker.move(lx, t, overPet, ctrlHeld);
+          if (tier) strokeTier(tier);
+          const ddx = cp.x - dragStartCursor.x, ddy = cp.y - dragStartCursor.y;
+          const stroking = strokeTracker.active && strokeTracker.count >= 1;
+          const horizontal = Math.abs(ddx) > 2 * Math.abs(ddy);
+          const becomesDrag = stroking ? (Math.abs(ddy) > 70 || strokeTracker.legTravel() > 140)      // a stroke only turns into a drag on a long, clear move
+                                       : (horizontal ? Math.hypot(ddx, ddy) > 48 : Math.hypot(ddx, ddy) > 10);   // a first sideways leg is given room to turn back
+          if (becomesDrag) { dragMoved = true; strokeTracker.end(); }
+        }
         if (dragMoved) {
           if (!engine.drag.active) { engine.dragStart(grabPoint); prevDragV = null; }
           await win.setPosition(new LogicalPosition(nx, ny));
@@ -578,7 +634,7 @@
     }
     // look-follow FIRST: vector from head point (top 25% of pet) to cursor — never behind an IPC call that may fail
     const headX = PAD_SIDE + dispW / 2, headY = PAD_TOP + dispH * 0.25;
-    try { engine.setLookVector(lx - headX, ly - headY); } catch (e) { pollFail('look', e); }
+    if (engine.lookEnabled !== false) { try { engine.setLookVector(lx - headX, ly - headY); } catch (e) { pollFail('look', e); } }   // 0.9.4: off = no angle polling at all
     // hit test against drawn pixels (pet body + bubble)
     let visible = true;
     try {
@@ -593,13 +649,7 @@
       const overPaw = isOver(pawEl, lx, ly);
       if (overPet || overUi || overPaw || careEl.style.display === 'block') pawShownUntil = nowSec() + 0.8;
       pawEl.style.display = nowSec() < pawShownUntil ? 'flex' : 'none';
-      // Petting works anywhere on visible pet pixels, not only on the head.
-      if (overPet && !ctrlHeld) {                       // stroke = 3+ horizontal direction reversals within 1.5s
-        if (t - stroke.lastT > 1.5) stroke.xs = []; stroke.lastT = t; stroke.xs.push(lx);
-        if (stroke.xs.length > 30) stroke.xs.shift();
-        let rev = 0; for (let i = 2; i < stroke.xs.length; i++) { const a = stroke.xs[i - 1] - stroke.xs[i - 2], b = stroke.xs[i] - stroke.xs[i - 1]; if (a * b < 0 && Math.abs(a) > 2 && Math.abs(b) > 2) rev++; }
-        if (rev >= 3) { stroke.xs = []; if (engine.stroke()) care.do('pet', { silent: true }); }
-      } else stroke.xs = [];
+      // Petting (0.9.4) is a press-and-hold stroke anywhere on visible pet pixels — see the dragging branch above and strokeTier().
       visible = overPet || overUi || (careEl.style.display === 'block' && isOver(careEl, lx, ly)) || isOver(pawEl, lx, ly);
     } catch (e) { pollFail('hit', e); }
     // Pass-through is re-asserted every 1.5 s even when unchanged: the OS-side flag and our memory of it can drift
@@ -613,6 +663,14 @@
     pollDiag.ok++; pollDiag.lastOkAt = nowMs;
   }
   // watchdog: if the loop has not completed for 3 s while the window is shown, make it clickable (safe default) and note it
+  // 0.9.5 (Mac P0: 没有宠物时窗口吞掉所有点击，只能强制退出): poll() and the watchdog below both bail out on !engine, and the
+  // boot path's restore call used to sit in the else branch — so an empty, invisible, always-on-top window stayed
+  // click-opaque forever and swallowed every click under it (the Finder window behind it included). This guard is
+  // independent of the pet: no engine -> the window must be click-through, no matter how we got there.
+  setInterval(async () => {
+    if (engine || hidden) return;
+    try { await win.setIgnoreCursorEvents(true); } catch (_) {}
+  }, 1500);
   setInterval(async () => {
     if (!engine || hidden) return;
     if (pollDiag.lastOkAt && performance.now() - pollDiag.lastOkAt > 3000) {
@@ -625,13 +683,18 @@
   setInterval(poll, 33);
   let lastStep = performance.now();
   setInterval(async () => {
-    if (!beh || !winRect || dragging) { lastStep = performance.now(); return; }
+    if (!beh || dragging) { lastStep = performance.now(); return; }          // a missing rect is beh.step's business: it returns null and logs idle-skipped norect
     const now = performance.now(); const dt = Math.min(0.1, (now - lastStep) / 1000); lastStep = now;
-    const r = beh.step(dt); if (!r) { engine.extraRot = 0; if (engine.walking) engine.setWalking(false); return; }
-    engine.flip = !!r.flip; engine.extraRot = r.rot || 0;
-    engine.setWalking(!!r.walking && (beh.mode === 'walk' || beh.follow));                 // 0.9.2: real walk cycle while strolling (not while flying / peeking)
+    const r = beh.step(dt); if (!r) { engine.extraRot = 0; if (engine.walking) { engine.setWalking(false); engine.flip = false; } return; }
+    const walking = !!r.walking && (beh.mode === 'walk' || beh.follow);                    // 0.9.2: real walk cycle while strolling (not while flying / peeking)
+    engine.flip = walking ? engine.walkFlip(!!r.flip) : !!r.flip; engine.extraRot = r.rot || 0;   // 0.9.4: honours actions.walk.facing
+    engine.setWalking(walking);
     winRect.x = r.x; winRect.y = r.y;
-    try { await win.setPosition(new LogicalPosition(Math.round(r.x), Math.round(r.y))); } catch (_) {}
+    try { await win.setPosition(new LogicalPosition(Math.round(r.x), Math.round(r.y))); }
+    catch (e) {                                                                            // the window would not move: never keep the legs going on the spot
+      if (beh.mode === 'walk') { beh.stopWalk('failed'); appendLog('walk setPosition failed: ' + (e && e.message ? e.message : e)); }
+      engine.setWalking(false); engine.flip = false; return;
+    }
     if (r.arrived === 'walk' || r.landed) { engine.flip = false; engine.setWalking(false); }
     if (r.landed) fireRule('landed');
   }, 33);
@@ -642,12 +705,44 @@
     if (!engine || e.button !== 0) return;
     if (catchGame && catchHit(e.clientX, e.clientY)) return;              // 0.9.0: a click on the light scores, never starts a drag
     if (petAlphaAt(e.clientX, e.clientY) <= 25) return;
+    if (beh) beh.stopWalk('interrupted');                                  // a hand on it ends any stroll at once (0.9.4)
+    if (engine.walking) { engine.setWalking(false); engine.flip = false; }
     const sf = await win.scaleFactor();
     dragStartCursor = (await cursorPosition()).toLogical(sf); dragStartWin = (await win.outerPosition()).toLogical(sf);
     dragging = true; dragMoved = false; mouseDownAt = performance.now(); prevCursorForV = null;
     grabPoint = { x: (e.clientX - PAD_SIDE) / Math.max(1e-6, scale), y: (e.clientY - PAD_TOP) / Math.max(1e-6, scale) };
+    if (!ctrlHeld) strokeTracker.press(e.clientX, performance.now() / 1000);   // a new stroking round (0.9.4)
   });
+  // 0.9.4 three-tier stroking: 3 reversals = a light touch, 10 = a visible reaction, 15 = the heart + the `pet` growth event.
+  // The care system's 2-minute `pet` cooldown still rules the reward: inside it the heart is only visual (no growth, no voice).
+  function strokeTier(tier) {
+    if (!engine || !care) return;
+    engine.userInput();
+    const now = performance.now();
+    if (tier === 'light') { engine.showExpression('shy', 700); strokeGlow = { t0: now, level: 1 }; return; }
+    if (tier === 'medium') { engine.showExpression('shy', 900); setTimeout(() => engine.showExpression('happy', 1500), 900); strokeGlow = { t0: now, level: 2 }; return; }
+    strokeGlow = { t0: now, level: 3 };
+    if (care.can('pet')) { if (engine.stroke()) care.do('pet', { silent: true }); }   // shy → happy, line / voice (chance), milestone heart effect, growth + mood + wish
+    else {
+      engine.showExpression('shy', 1000); setTimeout(() => engine.showExpression('happy', 1500), 1000);
+      const m = (pet.manifest.milestones || []).find(x => x.event === 'stroke');
+      if (fxQueue) fxQueue.request((m && m.effect) || 'hearts', { effect: (m && m.effect) || 'hearts' });   // the visual heart, nothing counted twice
+    }
+  }
+  function drawStrokeGlow() {
+    if (!strokeGlow) return; const age = (performance.now() - strokeGlow.t0) / 1000; const dur = 0.7 + strokeGlow.level * 0.15;
+    if (age > dur) { strokeGlow = null; return; }
+    const hp = headPoint(); const n = strokeGlow.level * 2; const fade = 1 - age / dur;
+    ctx.save(); ctx.globalAlpha = fade * 0.9; ctx.fillStyle = strokeGlow.level >= 3 ? '#ff8fb4' : '#ffe27a';
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + strokeGlow.t0 / 700; const r = dispW * (0.18 + 0.08 * strokeGlow.level) * (0.6 + age / dur * 0.6);
+      const x = hp.x + Math.cos(a) * r, y = hp.y + dispH * 0.12 + Math.sin(a) * r * 0.45; const s = 2.5 + strokeGlow.level * 0.8;
+      ctx.beginPath(); ctx.moveTo(x, y - s); ctx.lineTo(x + s * 0.35, y); ctx.lineTo(x, y + s); ctx.lineTo(x - s * 0.35, y); ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+  }
   window.addEventListener('mouseup', async (e) => {
+    strokeTracker.end();                                                    // the round ends with the press, whatever it reached
     if (!dragging) return;
     dragging = false;
     if (dragMoved) {
@@ -666,10 +761,9 @@
 
   async function keepOnScreen() {
     try {
-      const sf = await win.scaleFactor(); const mon = await currentMonitor(); if (!mon) return;
+      const sf = await win.scaleFactor(); if (!monRect) await refreshRects(); const m = monRect; if (!m) return;
       const wp = (await win.outerPosition()).toLogical(sf), ws = (await win.outerSize()).toLogical(sf);
-      const mp = mon.position.toLogical ? mon.position.toLogical(sf) : mon.position, ms = mon.size.toLogical ? mon.size.toLogical(sf) : mon.size;
-      const x = Math.min(Math.max(wp.x, mp.x - ws.width + 40), mp.x + ms.width - 40), y = Math.min(Math.max(wp.y, mp.y - PAD_TOP), mp.y + ms.height - 40);
+      const x = Math.min(Math.max(wp.x, m.x - ws.width + 40), m.x + m.w - 40), y = Math.min(Math.max(wp.y, m.y - PAD_TOP), m.y + m.h - 40);
       if (x !== wp.x || y !== wp.y) await win.setPosition(new LogicalPosition(x, y));
     } catch (_) {}
   }
@@ -714,6 +808,7 @@
     if (settings.muted || !text) return;
     const now = performance.now();
     if (!opts.force && now - lastSpeakAt < 700) return;   // rapid-fire lines (stroking, multi-click): keep the bubble, skip the audio
+    if (opts.source === 'typing' && !typingGate.allow(now / 1000)) return;   // 0.9.4: typing-sourced voice in cooldown — the bubble already shows
     lastSpeakAt = now;
     const seq = ++speakSeq;
     stopVoice();                                     // never two voices at once
@@ -750,12 +845,13 @@
   const REACT_CHANCE = { click: 0.35, clickBody: 0.35, clickMany: 1, stroke: 0.25, dragStart: 0.3, dragEnd: 0.45, hit: 0.3 };
   const REACT_KIND = { click: 'click', clickBody: 'click', clickMany: 'angry', stroke: 'stroke', dragStart: 'drag', dragEnd: 'drop', hit: 'hit' };
   let lastReactAt = 0, reactSeq = 0;
-  function reaction(kind, force, volume) {
+  function reaction(kind, force, volume, source) {
     if (settings.muted || !pet) return;
     const now = performance.now();
     if (!force && now - lastReactAt < 160) return;
     lastReactAt = now;
     if (currentAudio && !currentAudio.paused && !currentAudio.ended) return;    // a spoken line is playing: don't talk over it
+    if (source === 'typing' && !typingGate.allow(now / 1000)) return;          // 0.9.4: the per-nod "mrp" and the typing startle share the typing gate
     const k = KapiVoice.voiceKind(pet.manifest, voiceIndex); if (k === 'none') return;
     const v = pet.manifest.voice || {};
     if (currentBabble) { try { currentBabble.stop(); } catch (_) {} }
@@ -792,7 +888,12 @@
   listen('input-watcher', (e) => { const p = e.payload || {}; if (p.active) toast(T.perm.on, 3000); });
 
   // ---------- 0.9.3: pet.json.rules — the package's own "when X, do Y" ----------
-  function fireRule(event, ctx) { try { if (rules) return rules.fire(event, ctx || {}); } catch (_) {} return []; }
+  function fireRule(event, ctx) {
+    // a typing / typingFast / typingLong rule's say / react steps are typing-sourced voices (0.9.4): same gate as the rest
+    const prev = ruleSource; ruleSource = /^typing/.test(event) ? 'typing' : null;
+    try { if (rules) return rules.fire(event, ctx || {}); } catch (_) {} finally { ruleSource = prev; }
+    return [];
+  }
   function ruleWalk(where) {
     if (!beh || !winRect || !monRect) return;
     const m = monRect, w = winRect;
@@ -825,8 +926,8 @@
     if (!ok) { toast(T.notebookFail ? T.notebookFail(why) : `小本子没打开：${why}`, 6000); invoke('close_panel_window').catch(() => {}); }
   }
   async function openNotebook() {
-    if (!pet) return;
-    appendLog('notebook-click');
+    if (!pet) return toast(T.noPet, 6000);
+    appendLog('notebook-click'); if (beh) beh.stopWalk('interrupted');
     if (notebookWait) { appendLog('notebook-click ignored (pending)'); return; }
     const restoreTimer = setTimeout(() => restoreInteraction('1.5s watchdog'), 1500);
     notebookWait = { timeout: setTimeout(() => { appendLog('timeout notebook (no dom-ready/loaded in 8 s)'); notebookSettled(false, 'timeout'); restoreInteraction('timeout'); }, 8000) };
@@ -861,28 +962,34 @@
     ctx.save(); ctx.globalAlpha = a; ctx.font = `${Math.round(Math.max(22, dispW * 0.16))}px system-ui, "Apple Color Emoji", "Segoe UI Emoji"`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(findShow.emoji, x, y); ctx.restore();
   }
-  // Catch the light: a bright dot wanders inside the window for 20 s; every click on it scores, the pet lunges after it.
+  // Catch the light (0.9.4): a bright dot wanders inside the window for pet.json.catchLight.durationSec (default 10 s,
+  // 5-60); every click on it scores, the pet lunges with its species' move (catchLightConfig). One duration drives the
+  // countdown, the settlement, the wish and the restart; the score target scales with it (10 s -> 8 points).
   // The dot is drawn on the stage canvas so the hit test (which decides click-through) counts it as solid.
+  function catchCfg() { return catchLightConfig(pet.manifest); }
   function startCatchGame() {
-    if (!engine || catchGame || (care && care.s.sleeping)) return;
-    const G = T.growth;
-    catchGame = { t0: performance.now(), score: 0, x: PAD_SIDE + dispW * 0.5, y: PAD_TOP + dispH * 0.5, tx: 0, ty: 0, nextMove: 0, hitAt: 0, r: Math.max(14, dispW * 0.07) };
-    pickDot(); say(G.game.start); sound('pop', 0.4); engine.showExpression('surprised', 1500);
+    if (!engine || catchGame || (care && care.s.sleeping)) return false;
+    const G = T.growth; const cfg = catchCfg();
+    if (beh) beh.stopWalk('interrupted');
+    catchGame = { round: new CatchRound(cfg, performance.now() / 1000), cfg, x: PAD_SIDE + dispW * 0.5, y: PAD_TOP + dispH * 0.5, tx: 0, ty: 0, nextMove: 0, hitAt: 0, r: Math.max(14, dispW * 0.07) };
+    pickDot(); say(G.game.start(cfg.durationSec)); sound('pop', 0.4); engine.showExpression('surprised', 1500);
+    appendLog(`catch-start ${cfg.durationSec}s target ${cfg.target} action ${cfg.action} (${cfg.actionSource}, ${cfg.species})`);
     if (milestones) milestones.record('game');
+    return true;
   }
   function pickDot() {
     const g = catchGame; g.tx = PAD_SIDE + 20 + Math.random() * (dispW - 40); g.ty = PAD_TOP + 20 + Math.random() * (dispH * 0.95 - 40); g.nextMove = performance.now() + 700 + Math.random() * 900;
   }
   function stepCatchGame() {
-    const g = catchGame; if (!g) return; const now = performance.now(); const el = (now - g.t0) / 1000;
-    if (el >= 20) { endCatchGame(); return; }
+    const g = catchGame; if (!g) return; const now = performance.now();
+    if (g.round.tick(now / 1000)) { endCatchGame(); return; }
     if (now > g.nextMove) pickDot();
     const k = 1 - Math.exp(-0.12); g.x += (g.tx - g.x) * k; g.y += (g.ty - g.y) * k;
     // the pet keeps its eyes on the dot
     try { engine.setLookVector(g.x - (PAD_SIDE + dispW / 2), g.y - (PAD_TOP + dispH * 0.25)); } catch (_) {}
   }
   function drawCatchGame() {
-    const g = catchGame; if (!g) return; const now = performance.now(); const el = (now - g.t0) / 1000;
+    const g = catchGame; if (!g) return; const now = performance.now();
     const pulse = 1 + 0.12 * Math.sin(now / 90); const r = g.r * pulse; const hit = now - g.hitAt < 220;
     ctx.save();
     const grd = ctx.createRadialGradient(g.x, g.y, 0, g.x, g.y, r * 1.8); grd.addColorStop(0, hit ? 'rgba(255,255,255,1)' : 'rgba(255,240,150,0.95)'); grd.addColorStop(0.5, 'rgba(255,200,60,0.6)'); grd.addColorStop(1, 'rgba(255,200,60,0)');
@@ -890,7 +997,7 @@
     ctx.fillStyle = hit ? '#fff' : '#ffe27a'; ctx.beginPath(); ctx.arc(g.x, g.y, r * 0.55, 0, Math.PI * 2); ctx.fill();
     // score + time, top-right
     ctx.font = '600 13px system-ui, sans-serif'; ctx.textAlign = 'right'; ctx.fillStyle = 'rgba(40,38,36,0.85)';
-    const label = `${g.score}  ·  ${Math.max(0, Math.ceil(20 - el))}s`; const w = ctx.measureText(label).width + 14; const bx = PAD_SIDE + dispW - 4;
+    const label = `${g.round.score}  ·  ${Math.ceil(g.round.remaining(now / 1000))}s`; const w = ctx.measureText(label).width + 14; const bx = PAD_SIDE + dispW - 4;
     ctx.fillStyle = 'rgba(255,252,247,0.92)'; ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(bx - w, PAD_TOP + 4, w, 20, 10); else ctx.rect(bx - w, PAD_TOP + 4, w, 20); ctx.fill();
     ctx.fillStyle = '#2c2b29'; ctx.fillText(label, bx - 7, PAD_TOP + 18);
     ctx.restore();
@@ -898,16 +1005,19 @@
   function catchHit(x, y) {
     const g = catchGame; if (!g) return false;
     if (Math.hypot(x - g.x, y - g.y) > g.r * 1.6) return false;
-    g.score += 1; g.hitAt = performance.now(); pickDot(); sound('pop', 0.35); reaction('happy', true, 0.3);
-    engine.play(pet.manifest.actions.pounce ? 'pounce' : 'jump', PET_PRIORITY.user);
+    if (!g.round.hit()) return true;
+    g.hitAt = performance.now(); pickDot(); sound('pop', 0.35); reaction('happy', true, 0.3);
+    engine.play(pet.manifest.actions[g.cfg.action] ? g.cfg.action : 'jump', PET_PRIORITY.user);
     return true;
   }
   function endCatchGame() {
-    const g = catchGame; catchGame = null; if (!g) return; const G = T.growth;
+    const g = catchGame; catchGame = null; if (!g) return; const G = T.growth; const score = g.round.score, cfg = g.cfg;
     const best = growth ? (growth.st.growth.best.catch || 0) : 0;
-    if (growth) growth.record('game', g.score);
-    say(G.game.over(g.score, best), false); engine.showExpression(g.score > 0 ? 'happy' : 'sad', 2500); sound(g.score >= best && g.score > 0 ? 'fanfare' : 'chime', 0.4);
-    if (g.score >= 15 && !pet.manifest.actions.pounce && growth && !growth.st.growth.pounceAsked) { growth.st.growth.pounceAsked = true; setTimeout(() => say(G.game.wantPounce, true), 4000); }
+    if (growth) growth.record('game', score);                                  // one settlement per round: catchGame is null from here on
+    say(G.game.over(score, best), false); engine.showExpression(score > 0 ? 'happy' : 'sad', 2500); sound(score >= best && score > 0 ? 'fanfare' : 'chime', 0.4);
+    appendLog(`catch-end ${score}/${cfg.target} in ${cfg.durationSec}s`);
+    // "I want to learn …" only where the move fits the character: cats a pounce, birds a peck, people a tap; others just settle
+    if (score >= cfg.target && cfg.learnKey && growth && !growth.st.growth.catchAsked) { growth.st.growth.catchAsked = cfg.learnKey; const line = G.game[cfg.learnKey]; if (line) setTimeout(() => say(line, true), 4000); }
   }
 
   function greet() {
@@ -954,7 +1064,7 @@
   async function showMenu() {
     const { Menu, MenuItem, PredefinedMenuItem, Submenu, CheckMenuItem } = window.__TAURI__.menu;
     const frameActions = Object.entries(pet.manifest.actions).filter(([, a]) => a.type === 'frames').map(([id]) => id);
-    const actionItems = await Promise.all(frameActions.map(id => MenuItem.new({ text: id, action: () => engine.play(id) })));
+    const actionItems = await Promise.all(frameActions.map(id => MenuItem.new({ text: id, action: () => requestPlay(id, 'menu') })));   // a cycle (walk) = a real stroll
     const scaleItems = await Promise.all([0.5, 0.75, 1, 1.5, 2].map(s => CheckMenuItem.new({ text: Math.round(s * 100) + '%', checked: Math.abs(settings.scale - s) < 0.01, action: async () => { settings.scale = s; await saveSettings(); await applyScale(); } })));
     const items = [
       await MenuItem.new({ text: T.menu.care(pet.name), action: openCare }),
@@ -969,10 +1079,11 @@
       await MenuItem.new({ text: T.menu2.come, action: () => beh && beh.comeHere() }),
       await MenuItem.new({ text: T.menu2.hide, action: () => beh && beh.peek() }),
       ...(pet.manifest.features && pet.manifest.features.perchOnWindow ? [await CheckMenuItem.new({ text: T.menu2.perch, checked: !!(beh && beh.mode === 'perch'), action: () => beh && beh.setPerch(beh.mode !== 'perch') })] : []),   // 0.9.2: off unless the pack opts in
+      ...(hasLookAssets() ? [await CheckMenuItem.new({ text: settings.lookFollow !== false ? T.menu2.lookOn : T.menu2.lookOff, checked: settings.lookFollow !== false, action: () => setLookFollow(settings.lookFollow === false) })] : []),   // 0.9.4
       ...(await wardrobeItems()),
       await PredefinedMenuItem.new({ item: 'Separator' }),
       await MenuItem.new({ text: T.menu.import, action: importPet }),
-      await MenuItem.new({ text: T.menu.switch, action: switchPet }),
+      ...((pets || []).length > 1 ? [await MenuItem.new({ text: T.menu.switch, action: switchPet })] : []),   // 0.9.5: one folder = one pet, so hide it unless this copy really has several
       await MenuItem.new({ text: T.teach.menu, action: teachExport }),
       await MenuItem.new({ text: T.teach.guide, action: openGuide }),
       await MenuItem.new({ text: T.menu.export, action: exportPet }),
@@ -1017,6 +1128,7 @@
     const i = pets.findIndex(p => p.id === pet.id); await loadPet(pets[(i + 1) % pets.length]); toast(T.switched(pet.name));
   }
   async function teachExport() {
+    if (!pet) return toast(T.noPet, 6000);
     try {
       const desktop = await window.__TAURI__.path.desktopDir();
       const file = `${pet.id}-v${pet.manifest.version}.petpack`;
@@ -1033,6 +1145,7 @@
     toast(T.teach.guideMissing);
   }
   async function exportPet() {
+    if (!pet) return toast(T.noPet, 6000);                                   // tray export with no pet used to throw silently
     const out = await window.__TAURI__.dialog.save({ defaultPath: `${pet.id}-v${pet.manifest.version}.petpack` }); if (!out) return;
     try { await invoke('export_pet', { dir: pet.dir, outPath: out }); toast(T.exported); } catch (e) { toast(T.exportFail + e, 5000); }
   }
@@ -1044,8 +1157,63 @@
     else if (id === 'diagnose') { const path = await saveDebugLog(); toast(`${pet ? `${pet.name} ${pet.id} v${pet.manifest.version}${pet.manifest.build ? '/b' + pet.manifest.build : ''} ← ${pet.dir}` : '无宠物'} · poll ok ${pollDiag.ok} · 失败 ${JSON.stringify(pollDiag.fails)} · ${pollDiag.lastErr || '无错误'} · 穿透=${lastHitVisible === null ? '?' : !lastHitVisible} · 日志 ${path}`, 9000); }
     else if (id === 'recover') { lastHitVisible = true; lastIgnoreAt = 0; try { await win.setIgnoreCursorEvents(false); } catch (_) {} hidden = false; try { await win.show(); } catch (_) {} }
   });
-  listen('panel-cmd', (e) => { const c = (e.payload || {}).cmd; if (c === 'game') startCatchGame(); else if (c === 'care') openCare(); });
-  listen('modifier-state', (e) => { ctrlHeld = !!(e.payload && e.payload.ctrl); if (!ctrlHeld) { whipPrev = null; whipMarks = []; whipTrail = []; whipFlash = null; drawWhip(); } });
+  // ---------- 0.9.4 look-follow switch + the notebook's command protocol ----------
+  function hasLookAssets() {
+    if (!pet || !engine) return false; const lf = pet.manifest.lookFollow || {};
+    return (lf.mode === 'frames8' && !!(engine.img.look && Object.values(engine.img.look).some(Boolean))) || (lf.mode === 'ring' && !!(engine.img.ring && engine.img.ring.length));
+  }
+  async function setLookFollow(on) {
+    settings.lookFollow = on !== false; await saveSettings();
+    if (engine) engine.setLookEnabled(settings.lookFollow);                 // off: base frame, no direction frames; on: the package config as it was
+    appendLog('look-follow ' + (settings.lookFollow ? 'on' : 'off'));
+  }
+  /** What the notebook may ask the pet to do. Returns {ok, reason}. reason: unknown | busy | sleeping | noWalk | cooldown | invalid */
+  function playBusy() {
+    if (!engine) return 'unknown';
+    if (care && care.s.sleeping) return 'sleeping';
+    if (beh && beh.mode === 'walk') return 'busy';
+    if (engine.state.action !== 'idle' && engine.state.prio >= PET_PRIORITY.user) return 'busy';   // a user-priority move is running: one at a time
+    return null;
+  }
+  function requestPlay(id, from) {
+    if (!pet || !engine) return { ok: false, reason: 'unknown' };
+    const a = pet.manifest.actions[id];
+    const performable = PET_PERFORMABLE;                                    // shared with panel.html (engine.js owns the list)
+    const valid = a && (a.type === 'frames' || (a.type === 'procedural' && performable.includes(a.preset)));
+    if (!valid) return { ok: false, reason: 'unknown' };
+    const busy = playBusy(); if (busy && !(busy === 'sleeping' && id === 'sleep')) return { ok: false, reason: busy };   // "sleep" while asleep = the wake button
+    if (id === 'eat' || id === 'drink' || id === 'sleep') {                  // care moves go through the care flow: props, cooldowns, xp, wishes
+      const kind = id === 'eat' ? 'feed' : id === 'drink' ? 'water' : 'sleep';
+      if (kind !== 'sleep' && !care.can(kind)) return { ok: false, reason: 'cooldown' };
+      const ok = care.do(kind); if (careEl.style.display === 'block') { care.renderPanel(careEl); queueCareLayout(true); }
+      return { ok: !!ok, reason: ok ? '' : 'cooldown' };
+    }
+    if (a.cycle) {                                                          // walk = a real stroll through the movement state machine, never frames on the spot
+      if (!beh || !winRect || !monRect) return { ok: false, reason: 'noWalk' };
+      if (!engine.hasWalkCycle()) return { ok: false, reason: 'noWalk' };
+      return { ok: !!beh.wander(), reason: '' };
+    }
+    engine.userInput();
+    return { ok: !!engine.play(id, PET_PRIORITY.user), reason: '' };
+  }
+  function panelAck(cmd, action, r) { try { emit('panel-ack', { cmd, action: action || '', ok: !!r.ok, reason: r.ok ? '' : (r.reason || 'rejected') }); } catch (_) {} }
+  // panel-cmd payloads: {cmd:'play', action} | {cmd:'expr', name} | {cmd:'voice'} | {cmd:'lookFollow', on} | {cmd:'game'} | {cmd:'care'}
+  // every one is answered with panel-ack {cmd, action, ok, reason}; anything else is rejected with reason 'rejected'
+  listen('panel-cmd', async (e) => {
+    const p = e.payload || {}; const c = p.cmd;
+    if (!pet || !engine) { panelAck(c, p.action, { ok: false, reason: 'unknown' }); return; }
+    if (c === 'game') { panelAck(c, '', { ok: startCatchGame(), reason: 'busy' }); return; }
+    if (c === 'care') { openCare(); panelAck(c, '', { ok: true }); return; }
+    if (c === 'play') { const id = typeof p.action === 'string' ? p.action : ''; const r = requestPlay(id, 'panel'); appendLog(`panel play ${id} -> ${r.ok ? 'ok' : r.reason}`); if (!r.ok && T.panelCmd && T.panelCmd[r.reason]) toast(T.panelCmd[r.reason], 3000); panelAck(c, id, r); return; }
+    if (c === 'expr') {
+      const name = typeof p.name === 'string' ? p.name : ''; const ok = !!(engine.img.expressions && engine.img.expressions[name]);
+      if (ok) engine.showExpression(name, 2500); panelAck(c, name, { ok, reason: 'unknown' }); return;
+    }
+    if (c === 'voice') { reaction('click', true); panelAck(c, '', { ok: true }); return; }   // mute + cooldown still apply inside reaction()
+    if (c === 'lookFollow') { if (!hasLookAssets()) { panelAck(c, '', { ok: false, reason: 'unknown' }); return; } await setLookFollow(p.on !== false); panelAck(c, settings.lookFollow ? 'on' : 'off', { ok: true }); return; }
+    panelAck(c, p.action, { ok: false, reason: 'rejected' });
+  });
+  listen('modifier-state', (e) => { ctrlHeld = !!(e.payload && e.payload.ctrl); if (ctrlHeld) strokeTracker.end(); if (!ctrlHeld) { whipPrev = null; whipMarks = []; whipTrail = []; whipFlash = null; drawWhip(); } });
   // 0.8.16: the user clicking around the desktop (not on the pet): a glance that way, a startle on a click burst
   listen('mouse-press', async (e) => {
     if (!engine || !beh || hidden) return; const p = e.payload || {};
@@ -1114,7 +1282,17 @@
   await loadSettings();
   await win.setAlwaysOnTop(!!settings.alwaysOnTop);
   pets = await invoke('list_pets');
-  if (!pets.length) { toast(T.noPet, 8000); }
+  let launch = null; try { launch = await invoke('launch_info'); } catch (_) {}
+  if (!pets.length) {
+    try { await win.setIgnoreCursorEvents(true); } catch (_) {}            // 0.9.5: first thing, before anything can go wrong
+    try { await appendLog(`start: NO PET. exeDir=${launch ? launch.exeDir : '?'} translocated=${launch ? launch.translocated : '?'} roots=${launch ? launch.roots.join(' | ') : '?'}`); } catch (_) {}
+    toast(T.noPet, 8000);
+    // a transparent toast on an invisible window is not an error message: say it in a real dialog, with the way out
+    setTimeout(() => {
+      const extra = launch && launch.translocated ? '\n\n' + T.noPetMoved : '';
+      try { window.__TAURI__.dialog.message(T.noPetHelp + extra, { title: 'Kapi', kind: 'warning' }); } catch (_) {}
+    }, 700);
+  }
   else {
     // A first-delivery bundle names its pet (bundle.json next to the exe). The first start from that bundle makes
     // that pet the active one — once per bundleId — so a user who had an older pet does not keep seeing it; after
@@ -1134,7 +1312,7 @@
     } catch (_) {}
     const chosen = bundlePick || pets.find(p => p.id === settings.activePetId) || pets[0];
     try { await loadPet(chosen); } catch (e) { toast(String(e), 6000); }
-    try { await appendLog(`start ${chosen.id} v${chosen.version} from ${chosen.dir}; candidates: ${pets.map(p => `${p.id}@v${p.version}:${p.dir}`).join(' | ')}`); } catch (_) {}
+    try { await appendLog(`start ${chosen.id} v${chosen.version} from ${chosen.dir}${launch && launch.translocated ? ' [TRANSLOCATED]' : ''}; candidates: ${pets.map(p => `${p.id}@v${p.version}:${p.dir}`).join(' | ')}`); } catch (_) {}
     if (!engine) { try { await win.setIgnoreCursorEvents(true); } catch (_) {} }   // a window with no pet must never block clicks
   }
   render();

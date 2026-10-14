@@ -5,6 +5,7 @@ const html = readFileSync(new URL('../src/panel.html', import.meta.url), 'utf8')
 const js = html.match(/<script>\r?\n([\s\S]*?)\r?\n\s*<\/script>/)[1];   // \r?: Windows checkouts turn LF into CRLF
 new Function(readFileSync(new URL('../src/i18n.js', import.meta.url), 'utf8'))();
 new Function(readFileSync(new URL('../src/growth.js', import.meta.url), 'utf8'))();
+new Function(readFileSync(new URL('../src/engine.js', import.meta.url), 'utf8'))();   // the page loads it too: PET_PERFORMABLE decides which procedural presets are clickable
 const els = {}; const el = (id) => els[id] || (els[id] = { innerHTML: '', textContent: '', querySelectorAll: () => [] });
 globalThis.document = { getElementById: el, title: '' };
 globalThis.location = { search: '?dir=%2Fpets%2Fx&lang=zh-CN' };
@@ -14,6 +15,7 @@ const state = { level: 3, mood: 60, growth: { day: today, wishes: [{ id: 'a', ki
 const emitted = [];
 globalThis.window = { __TAURI__: { core: { invoke: async (cmd, a) => { if (a.path.endsWith('pet.json')) return JSON.stringify(pet); if (a.path.endsWith('state.json')) return JSON.stringify(state); throw new Error('no persona'); } }, event: { emit: async (n, p) => emitted.push([n, p]), listen: async (n, fn) => { listeners[n] = fn; } } } };
 const listeners = {};
+globalThis.window.PET_PERFORMABLE = globalThis.PET_PERFORMABLE;   // in the browser both are the same object
 let intervalFn = null; globalThis.setInterval = (fn) => { intervalFn = fn; return 1; };
 await new Function('I18N', 'Growth', 'GROWTH_DEFS', js)(globalThis.I18N, globalThis.Growth, globalThis.GROWTH_DEFS);
 await new Promise(r => setTimeout(r, 20));
@@ -35,3 +37,48 @@ listeners['notebook-open']({ payload: { dir: 'C:\\pets\\y', lang: 'zh-CN' } }); 
 assert.ok(emitted.filter(([n]) => n === 'notebook-loaded').length === 2, 'reloaded for the new dir');
 globalThis.window.__panel.setTab('chapters'); b = el('body').innerHTML; assert.ok(b.includes('老朋友') && b.includes('混熟了') && b.includes('教它一个新动作'), 'chapters with tasks');
 console.log('panel render ok');
+
+// ---------- 0.9.4: skill cards + the panel-cmd / panel-ack protocol ----------
+globalThis.window.__panel.setTab('skills'); b = el('body').innerHTML;
+assert.ok(/data-kind="play" data-id="wave"/.test(b) && b.includes('点一下试试'), 'a frames action is a play card');
+assert.ok(/class="card can[^"]*" role="button" tabindex="0"[^>]*data-id="eat"/.test(b), 'learned eat is a play card (care flow)');
+assert.ok(/card info[^>]*data-id="sleep"/.test(b) && /card info[^>]*data-id="drink"/.test(b), 'stand-ins without a performable preset are information');
+assert.ok(/data-kind="look"[^>]*data-id="look"/.test(b) && b.includes('role="switch"') && b.includes('aria-checked="true"'), 'look-follow is a switch, on by default');
+assert.ok(/data-kind="voice"/.test(b) && b.includes('听一下'), 'voice card'); assert.ok(/data-kind="expr" data-id="happy"/.test(b) && b.includes('看一眼'), 'expression card');
+assert.ok(/card info[^>]*data-id="dance"/.test(b) && !/card can[^>]*data-id="dance"/.test(b), 'not-yet moves are information only');
+assert.ok(el('recent').textContent.includes('挥手') || el('recent').textContent.includes('吃饭'), 'header shows the latest learned move');
+// a play click emits once; a second click while pending is ignored (double click)
+const sent = () => emitted.filter(([n]) => n === 'panel-cmd');
+const n0 = sent().length;
+globalThis.window.__panel.activate('play', 'wave', 'play:wave'); globalThis.window.__panel.activate('play', 'wave', 'play:wave'); globalThis.window.__panel.activate('play', 'eat', 'play:eat');
+assert.deepEqual(sent().slice(n0).map(([, p]) => p), [{ cmd: 'play', action: 'wave' }], 'one panel-cmd even on a double click, other cards locked meanwhile');
+assert.ok(globalThis.window.__panel.pending() && globalThis.window.__panel.status('play:wave').text === '正在表演…', 'card shows performing');
+assert.ok(typeof listeners['panel-ack'] === 'function', 'listens for panel-ack');
+listeners['panel-ack']({ payload: { cmd: 'play', action: 'wave', ok: false, reason: 'busy' } });
+assert.equal(globalThis.window.__panel.status('play:wave').text, '等它做完', 'busy reason shown'); assert.equal(globalThis.window.__panel.pending(), null, 'unlocked after the ack');
+globalThis.window.__panel.activate('play', 'wave', 'play:wave'); assert.equal(sent().length, n0 + 2, 'can play again after the ack');
+listeners['panel-ack']({ payload: { cmd: 'play', action: 'wave', ok: true, reason: '' } }); assert.equal(globalThis.window.__panel.status('play:wave').text, '做完了');
+// look-follow switch emits {cmd:'lookFollow', on}
+globalThis.window.__panel.toggleLook(); assert.deepEqual(sent().slice(-1)[0][1], { cmd: 'lookFollow', on: false }, 'switch off');
+listeners['panel-ack']({ payload: { cmd: 'lookFollow', action: 'off', ok: true, reason: '' } }); assert.ok(el('body').innerHTML.includes('aria-checked="false"'), 'switch re-rendered off');
+globalThis.window.__panel.toggleLook(); assert.deepEqual(sent().slice(-1)[0][1], { cmd: 'lookFollow', on: true }, 'switch on again');
+listeners['panel-ack']({ payload: { cmd: 'lookFollow', action: 'on', ok: true, reason: '' } });
+// expression and voice cards
+globalThis.window.__panel.activate('expr', 'happy', 'expr:happy'); assert.deepEqual(sent().slice(-1)[0][1], { cmd: 'expr', name: 'happy' });
+listeners['panel-ack']({ payload: { cmd: 'expr', action: 'happy', ok: true, reason: '' } });
+globalThis.window.__panel.activate('voice', 'voice', 'voice:voice'); assert.deepEqual(sent().slice(-1)[0][1], { cmd: 'voice' });
+listeners['panel-ack']({ payload: { cmd: 'voice', action: '', ok: true, reason: '' } });
+// walk: frames without a cycle = disabled with a reason; with cycle = a play card that strolls
+pet.actions.walk = { type: 'frames' }; await intervalFn(); b = el('body').innerHTML;
+assert.ok(/card off[^>]*data-kind="walk" data-id="walk"/.test(b) && b.includes('还没学会侧身走路'), 'walk without a cycle is disabled with a reason');
+pet.actions.walk = { type: 'frames', cycle: true }; await intervalFn(); b = el('body').innerHTML;
+assert.ok(/card can[^>]*data-kind="walk" data-id="walk"/.test(b) && b.includes('去走一圈'), 'walk with a cycle is clickable');
+globalThis.window.__panel.activate('walk', 'walk', 'walk:walk'); assert.deepEqual(sent().slice(-1)[0][1], { cmd: 'play', action: 'walk' });
+listeners['panel-ack']({ payload: { cmd: 'play', action: 'walk', ok: false, reason: 'noWalk' } }); assert.equal(globalThis.window.__panel.status('walk:walk').text, '还没学会侧身走路');
+// procedural nod is a play card too; an unknown procedural state (idle) is not a card
+pet.actions.nod = { type: 'procedural', preset: 'nod' }; await intervalFn(); b = el('body').innerHTML;
+assert.ok(/card can[^>]*data-kind="play" data-id="nod"/.test(b) && b.includes('点头'), 'procedural nod is playable'); assert.ok(!/data-id="idle"/.test(b), 'idle is not a card');
+// empty state carries the pet's name
+pet.actions = { idle: { type: 'procedural' } }; pet.layers.expressions = {}; await intervalFn(); b = el('body').innerHTML;
+assert.ok(b.includes('小云 还在学习新本领') && b.includes('小云 还没有专门的表情'), 'character-flavoured empty states');
+console.log('panel cards + protocol ok');

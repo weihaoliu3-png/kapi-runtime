@@ -171,3 +171,18 @@ console.log('engine tests passed');
   const m2 = JSON.parse(JSON.stringify(manifest)); const e2 = new PetEngine({ manifest: m2, persona, images }, { now: () => c });
   assert.ok(!e2.hasWalkCycle()); e2.setWalking(true); assert.equal(e2.state.action, 'idle', 'no walk frames: nothing plays');
   console.log('walk cycle ok'); }
+
+// 0.9.4 look-follow switch: off forces the base frame and ignores the cursor + scripted glances; on restores the pack config without a reload
+{ let c = 30000; const m = JSON.parse(JSON.stringify(manifest)); m.triggers.idleRandomEverySec = [99999, 99999];
+  const ee = new PetEngine({ manifest: m, persona, images }, { now: () => c }); ee.hover = true;
+  ee.setLookVector(300, 0); assert.equal(ee.look.current, 'd090');
+  ee.setLookEnabled(false); assert.equal(ee.look.current, 'base', 'off: back to base at once'); assert.equal(ee._currentImage().name, 'base');
+  c += 1; ee.setLookVector(300, 0); c += 1; ee.setLookVector(-300, 0); assert.equal(ee.look.current, 'base', 'off: the cursor is ignored');
+  assert.equal(ee.lookAlong(['d090', 'base'], 1), false, 'off: no scripted glance'); assert.equal(ee.lookScript, null);
+  ee.blink = { until: 0, next: c }; ee.update(); assert.ok(ee.blink.until > c, 'blinks still happen'); ee.blink.until = 0;
+  ee.img.expressions = { happy: img('happy') }; ee.showExpression('happy', 1000); assert.equal(ee._currentImage().name, 'happy', 'expressions still happen'); ee.expr.until = 0;
+  assert.ok(ee.play('wave'), 'actions still play'); ee._toIdle();
+  assert.deepEqual(m.lookFollow, manifest.lookFollow, 'the package config is untouched');
+  ee.setLookEnabled(true); c += 1; ee.setLookVector(300, 0); assert.equal(ee.look.current, 'd090', 'on: follows again, same config, no reload');
+  assert.ok(ee.lookAlong(['d270', 'base'], 1));
+  console.log('look toggle ok'); }

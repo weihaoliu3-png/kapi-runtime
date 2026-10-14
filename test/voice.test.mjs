@@ -81,3 +81,21 @@ console.log('voice tests passed');
   assert.equal(idx.kitten._alias, 'cat'); assert.ok(idx.kitten.rate > 1, 'kitten plays the cat bank higher');
   assert.equal(KapiVoice.playAnimal('cat', 'talk', { text: '喵' }), null, 'without a loaded index (no fetch here) it falls back to the synth');
   console.log('recording bank ok'); }
+// 0.9.4 typing voice cooldown: every typing-sourced real voice passes one gate — at most one per typingSec (default 60)
+{ const V = globalThis.KapiVoice;
+  assert.equal(V.typingCooldownSec({}), 60, 'default 60 s'); assert.equal(V.typingCooldownSec({ voice: { cooldowns: { typingSec: 90 } } }), 90);
+  assert.equal(V.typingCooldownSec({ voice: { cooldowns: { typingSec: 'x' } } }), 60, 'garbage -> default');
+  const g = new V.TypingGate(V.typingCooldownSec({}));
+  // 180 s of continuous typing: a nod sound every 1.5 s, a bud / bloom / pick line, fast-typing startles — all typing-sourced
+  let plays = 0, muted = false;
+  for (let t = 0; t < 180; t += 0.5) {
+    const wantsVoice = (t * 2) % 3 === 0 || t === 8 || t === 25 || t === 50 || t % 9 === 0;   // nods + garden stages + startles
+    if (wantsVoice && !muted && g.allow(t)) plays++;
+  }
+  assert.ok(plays <= 3, '180 s of typing -> at most 3 real voices: ' + plays); assert.equal(plays, 3);
+  // click voices never go through the gate: they are unaffected (the host only gates source === 'typing')
+  const g2 = new V.TypingGate(60); assert.equal(g2.allow(0), true); assert.equal(g2.allow(30), false); assert.equal(g2.remaining(30), 30);
+  // muted: the host does not call allow(), so "last played" does not move and the next unmuted voice plays at once
+  const g3 = new V.TypingGate(60); assert.equal(g3.allow(0), true); muted = true; /* 10..70 s muted: no allow() calls */ muted = false;
+  assert.equal(g3.allow(61), true, 'plays right after unmuting once the real cooldown has passed'); assert.equal(g3.allow(100), false);
+  console.log('typing gate ok'); }

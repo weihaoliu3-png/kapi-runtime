@@ -1,5 +1,7 @@
 # Kapi运行器
 
+**接手开发请先读 [`PRODUCT.md`](PRODUCT.md)**（产品定位、整体架构、当前进度、遗留问题、上线清单）。
+
 桌宠的桌面程序（Mac / Windows）。加载 `capafy-deskpet` skill 产出的宠物包（`.petpack`），负责透明窗口、穿透、拖拽、目光跟随、眨眼、动画、气泡、提醒、托盘。规格以 skill 里的 `references/runtime-contract.md` 和 `pet-package-contract.md` 为准。
 
 技术：Tauri 2 + 原生 JS（`src/engine.js` 纯逻辑、`src/main.js` 平台胶水）+ 极少 Rust（`src-tauri/src/lib.rs`：列宠物、读写文本、解压/打包 .petpack、托盘）。
@@ -19,6 +21,38 @@ npm run build         # 产出 src-tauri/target/release/bundle/…
 或者直接推一个 tag（`v0.2.0`）到 GitHub，`.github/workflows/build.yml` 会在 Mac / Windows 机器上各编一份，产物 `Kapi-mac.zip`、`Kapi-win.zip` 自动附在同名的 GitHub Release 上（Actions 的 Artifacts 里也有）；手动下载后**原样放进 skill 的 `assets/runtime/`**（不要解开重压），并把版本号写进 `assets/runtime/VERSION`。
 
 不签名（已定案）：Mac 首次打开要在"系统设置 → 隐私与安全性"里点"仍要打开"；Windows 会弹 SmartScreen。skill 的交付话术里已写清楚。
+
+## v0.9.5 修复：没有宠物时窗口吞掉所有点击（Mac 实机，P0）、空状态说人话、换 logo
+
+- **没有宠物 = 整个桌面点不动（跨平台 P0，Mac 实机撞上）**：启动时先把桌宠窗口设成可点击（`main.js` 正常起点），而把"没有引擎就恢复点击穿透"那行写在了有宠物的 `else` 分支里；两个兜底（33 ms 的 `poll()` 和 1.5 秒看门狗）又都以 `if (!engine) return;` 开头。于是 `list_pets` 返回空时，一个透明、始终置顶、完全不穿透的 360×480 窗口永远浮在桌面上，盖住下面的窗口 —— 用户以为系统卡死，只能强制退出。现在：① 空宠物分支第一件事就是 `setIgnoreCursorEvents(true)`；② 新增一个**独立于宠物**的 1.5 秒守卫，只要没有引擎就把窗口按回穿透（不管是怎么走到这一步的）；③ 托盘「恢复交互」之后同样由这个守卫兜住。
+- **空状态说人话**：以前只在一个看不见的透明窗口上弹 toast。现在额外弹一个真正的系统对话框，写清楚"Kapi 只是壳子，宠物住在 .petpack 里"、怎么导入、桌宠窗口不会挡住你点东西、怎么退出。
+- **macOS App Translocation 会被点名**：未签名的 app 从下载文件夹直接双击时，Gatekeeper 会把它挂到一个随机只读路径运行，`.app` 旁边的 `pets/` 就看不见了（"启动了但没有宠物"的第二种成因）。新增命令 `launch_info`（`exeDir` / `folder` / `translocated` / `roots`），启动日志里一并记录，被挪走时对话框直接告诉用户"把整个文件夹拖到应用程序或桌面再打开"。
+- **小本子的可执行预设不再手抄**：`engine.js` 新增 `PET_PERFORMABLE`（`PROCEDURAL` 去掉 breathe / sway / slump / dragWiggle / stagger / typing 这些"状态"），`main.js` 的 `requestPlay` 和 `panel.html` 的卡片判断共用这一份。
+- 「切换宠物」只在这个运行器真的装了多只时才出现（一个文件夹一只之后它对绝大多数用户是个死项）。
+- 没有宠物时的托盘项不再静默失败：「它的小本子」「导出当前宠物包」「教我新东西」会提示先导入宠物包（以前导出会直接抛异常，什么都不发生）。
+- 应用图标换成新的像素猫 logo（源图 `src-tauri/icons/app-icon.png`，CI 每次构建都会重新生成全部尺寸）。
+- **接手开发看 [`PRODUCT.md`](PRODUCT.md)**：产品定位、整体架构、当前进度、遗留问题（含未签名 / 公证）、上线清单。
+
+## v0.9.4 修复 + 新增：待机真的活、走路 = 窗口真的动、小本子能指挥、抓光点 10 秒、打字不吵、目光可关、抚摸分三级
+
+团团（Windows，kapi-aacd73 v5–v7）复盘：装好后"10 分钟没动静"、"自动走路只是原地踏步"。两件事的根都在运行器，宠物包改 `idleRandom` 救不了。
+
+- **显示器解析兜底（"10 分钟没动静"的根因）**（`main.js` `resolveMonitor`）：Windows 上透明无边框窗口会让 `currentMonitor()` 返回 null；以前 `monRect` 一直没值，`behaviors.step()` 永远返回 null——待机小动作、溜达、规则里的 `walk` 全部静默不做，桌宠像贴纸。现在按顺序试 `currentMonitor → monitorFromPoint(窗口中心) → primaryMonitor → availableMonitors()[0] → window.screen`，有 `workArea`（去掉任务栏）就用它，所以溜达永远不会走到任务栏底下。每 2 秒刷新；来源变化时写一行 `monitor <来源>[/workArea] x y w h`，全部失败写一次 `monitor missing`。
+- **待机调度内置，不依赖 `triggers.idleRandom`**（`behaviors.js`）：空池只表示"没有额外自定义项"，活着的待机（每 15–45 秒）和溜达（有 walk 帧每 1–2.5 分钟，否则 3–7 分钟）照常；被挡住就 15–30 秒后再试，不丢时段。
+- **走路 = 窗口真的位移，只能由移动状态机启动**（`engine.js` / `behaviors.js` / `main.js`）：
+  - `cycle` 动作（`actions.walk`）**只在 `engine.setWalking(true)` 时播**。`idleRandom`、`lifeAct`、规则 `{play: "walk"}`、右键「动作」、小本子直接要求 `play('walk')` 一律拒绝（`cycle-refused walk …` / `idle-random skipped walk …` 各记一次日志），不会再出现"腿在动、窗口没动"。要让它走只有 `beh.wander()` / `walkTo()` / 规则 `{walk: …}` / 右键「动作」里的 walk 项（0.9.4 起等于溜达一次）。
+  - 溜达目标从当前显示器工作区（扣掉窗口宽高 + 8 px 边距）的左 / 中 / 右三个区域里选，不选当前所在和上一次去过的区域，离当前位置至少一个窗口宽；y 钳在工作区内。
+  - 每个 33 ms 步进都 `setPosition`；`setPosition` 抛错 → 立刻 `stopWalk('failed')` 并回 idle，绝不原地无限走。点击、拖拽、打开小本子、抓光点、睡着也立刻结束溜达（`walk-end interrupted`）。
+  - **`actions.walk.facing`**（`left` / `right`，默认 `right`）：帧朝哪边，运行器往另一边走时镜像（`engine.walkFlip`）。skill 的 `sheet_to_frames --cycle` / `video_to_action --mode cycle` 从 0.9.4 起写 `facing: "right"`，walk 必须是侧身朝右的素材——正面走路帧技术上能循环，但横着滑过桌面像贴纸，不再算合格的 walk。
+  - **验收口径变了**：以前只看 `engine.state.action === 'walk'`；现在必须看**窗口屏幕坐标连续变化**，一次溜达累计位移 ≥ 一个窗口宽（`test/idle-walk.test.mjs` 就是这么断言的）。
+- **诊断日志**（`kapi-debug.log`，`appendLog`）：`idle-scheduled <动作> <下一次秒数>`、`idle-skipped <bubble|panel|hover|sleep|drag|busy|lookScript|norect>`（同一原因 20 秒一条，`norect` 60 秒一条）、`walk-start x,y -> x,y`、`walk-end <arrived|interrupted|failed>`、`walk setPosition failed: …`、`monitor …`、`look-follow on|off`、`catch-start … / catch-end …`、`panel play <id> -> ok|<原因>`。拿到日志就能分清"定时器没启动 / 一直被挡 / 移动调用失败"三种情况。
+- **抓光点 10 秒 + 按物种扑**（`growth.js` `catchLightConfig` / `CatchRound`）：`pet.json.catchLight.durationSec`（默认 10，范围 5–60，老包缺字段也按 10 跑）一个数驱动倒计时、结算、心愿和再开一局；目标分随时长等比例（20 秒 15 分 → 10 秒 8 分）。扑的动作按 `catchLight.action`（包显式指定，必须存在）→ 物种默认表（cat / kitten：pounce；dog 三种：pounce / chase / jump；bird：peck / hop / jump；rabbit：hop / jump；rodent：dash / pounce / jump；human / cartoon：reach / tap / jump）→ 通用 `jump`。物种取 `pet.json.species` → `voice.species` → `voice.preset` female/male 或 `kind: tts` 视为 human → unknown。达到目标分且缺对应动作时的"想学"提示也分物种：猫科"扑"、鸟"啄"、真人 / 卡通"拍光点"，其他物种只结算不弹学习请求（只说一次）。
+- **打字叫声统一冷却 60 秒**（`voice.js` `TypingGate` + `main.js` `reaction()` / `say()` 的 `source: 'typing'`）：打字点头的轻"嗯"、快打惊吓、累计打字提醒、花园花苞 / 开花 / 摘花台词、规则 `typing* ` 事件里的 `say` / `react`——所有打字来源的**真实出声**走同一个闸门，每 `pet.json.voice.cooldowns.typingSec`（默认 60）秒最多一声；气泡、点头、长花照常，只跳过声音。点击 / 抚摸 / 喂食等不受影响。冷却只在进程内；静音时不记"已播放"。
+- **目光跟随开关**（右键「目光跟随 ✓ / ✗」，只在包里确有 look 素材时显示；`settings.lookFollow`，按 Kapi 文件夹存）：关 = 一直用 `layers/base.png`，不再轮询鼠标角度、不做环顾小动作，眨眼 / 表情 / 动作照常；开 = 立刻恢复包里的 `lookFollow` 配置，不重载、不删素材。小本子"目光跟随"卡片是同一个开关。
+- **抚摸三级反馈**（`behaviors.js` `StrokeTracker`，`main.js` `strokeTier`）：一次"按住不放在它身上来回摸"算一轮，计数单位是**有效折返**（转向前后两段都 ≥ 20 px，手抖、高 DPI 抖动不算）。3 次 = 轻反馈（害羞一下 + 头边小闪光，不出爱心、不计养成、不出声）；10 次 = 中反馈（shy → happy 一次）；15 次 = 爱心 + 原有 `pet` 养成事件 / 台词 / 叫声，然后本轮锁定，继续摩擦不刷爱心。松手、离开不透明像素 > 1 秒、按 Ctrl、转成拖拽都结束本轮清零。两分钟养成冷却照旧：冷却中 15 次只给视觉爱心，不重复计心情 / 经验 / 心愿。**抚摸和拖拽的区分**：按下后先看手是在来回划还是明确拎走——正在抚摸时要竖向 > 70 px 或单段 > 140 px 才变成拖拽；横向第一段给 48 px 回头的余地。
+- **小本子：刷新不重排 + 卡片可点 + `panel-cmd` / `panel-ack` 协议**（`panel.html` / `main.js`）：2 秒刷新只在内容变化时碰 DOM（焦点不丢、省 CPU）；顶部头像 / 名字 / 等级 / 最近学会。"会了什么"的卡片分五种：**play**（frames 动作和可表演的程序化预设：点一下播一次；吃喝睡走原有照顾流程——道具、冷却、经验、心愿）、**walk**（`cycle` 动作：点一下 = 真溜达一次，没有合格侧身循环时禁用并写原因）、**expr**（表情 2.5 秒）、**voice**（叫一声，仍受静音 + 冷却）、**look**（目光跟随开关）；服装是入口（回助手换），还不会的只是信息。协议：小本子 `emit('panel-cmd', {cmd: play|expr|voice|lookFollow|game|care, action|name|on})`，主窗口校验后执行并**每条必回** `panel-ack {cmd, action, ok, reason}`（reason：`busy` / `sleeping` / `noWalk` / `cooldown` / `unknown` / `rejected`），同一时刻只接受一个普通动作请求，表演中再点忽略（防连点叠加），4 秒没回应卡片显示"再试一次"。
+- 宠物包：新字段 `catchLight`、`voice.cooldowns.typingSec`、`actions.<id>.facing`，模板 `minVersion` 0.9.4（skill 校验器 `check_runtime_options` + `facing` 取值检查；规则 `{play: walk}` 直接报错让用 `{walk: …}`）。老包不改也能跑：抓光点 10 秒、打字 60 秒冷却、facing 视为 right。
+- 测试：`test/idle-walk.test.mjs`（空池 / 显式池、假时钟 10 分钟内必有待机 + 至少一次真溜达，断言窗口坐标连续变化与 ≥ 一个窗口宽；`walk` 进 idleRandom / 当技巧点都被拒且只记一次日志；`facing: left` 时往右走才镜像；点击 / 面板 / 移动失败 / 睡着都结束溜达；目标覆盖左 / 中 / 右且不连续同区；无显示器矩形不崩、`norect` 每分钟一条、显示器出现后恢复；`idle-skipped` 原因正确）、`test/stroke-tiers.test.mjs`（2 次无、3 / 10 / 15 各一次、30 次不重复、松手重计、< 20 px 不计、Ctrl 清零、拖拽清零、离开 > 1 秒结束）、`test/catch-light.test.mjs`（默认 10 秒 / 目标 8、范围钳制、9.9 秒不结算 10.0 秒只结算一次、物种动作与提示矩阵）、`test/panel.test.mjs`（五种卡片、双击只发一次、ack 状态）、`test/voice.test.mjs`（打字闸门：180 秒连续打字最多 3 声、静音不计、点击不受影响）、`test/engine.test.mjs`（目光开关：关即回 base、忽略鼠标与环顾、眨眼表情动作照常、开即恢复不重载）。
 
 ## v0.9.3 新增：规则引擎（宠物包自己描述行为）、发布自动化
 

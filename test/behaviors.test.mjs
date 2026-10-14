@@ -129,3 +129,14 @@ console.log('behaviors tests passed');
   assert.ok(played.includes('shiver') && ex.includes('surprised'), 'triple click = startled');
   clock += 100; eng.sleeping = true; assert.equal(b.onDesktopClick('left', win.x + 60, win.y + 300), null, 'asleep: nothing');
   console.log('desktop clicks ok'); }
+
+// 0.9.4: every typing-caused voice is tagged source 'typing' (the host gates those); click / stroke voices are not
+{ const reacts = [], says = [];
+  const eng = { hover: false, sleeping: false, state: { action: 'idle' }, m: { actions: { nod: {} } }, play: () => true };
+  const b = new Behaviors({ getWin: () => win, getMonitor: () => mon, getCursor: () => null, engine: eng, say: (x, st, o) => says.push(o && o.source), expr: () => {}, play: () => {},
+    line: (k) => k === 'typingFast' ? 'fast!' : null, t: () => I18N.pick('en'), react: (k, v, src) => reacts.push(k + ':' + (src || 'none')) });
+  clock += 10; b.onTyping(1); assert.deepEqual(reacts, ['typing:typing'], 'the per-nod note is typing-sourced');
+  clock += 2; b.onTyping(7); clock += 1; b.onTyping(7); assert.ok(reacts.includes('surprise:typing'), 'the startle is typing-sourced'); assert.deepEqual(says, ['typing'], 'the typingFast line is typing-sourced');
+  for (let i = 0; i < 60; i++) { clock += 2; b.onTyping(7); } assert.ok(says.length >= 2 && says.every(s => s === 'typing'), 'typingLong is typing-sourced too');
+  b.onOtherPet('q', { x: win.x + 10, w: 300 }, 'Bo'); assert.equal(reacts.at(-1), 'greet:none', 'a greeting is not typing-sourced');
+  console.log('typing sources ok'); }
