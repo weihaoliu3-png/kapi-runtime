@@ -289,27 +289,32 @@
     }
   }
 
-  // ---------------------------------------------------------------- stroking, in three tiers (0.9.4)
-  // One "round" = one press-and-hold on the pet. The count is the number of direction reversals in that hold where the
-  // leg before AND the leg after the turn each travelled >= minTravel px (so hand jitter and high-DPI noise never count).
+  // ---------------------------------------------------------------- stroking, in three tiers (0.9.4, hover-driven since 0.9.6)
+  // One "round" = one visit of the bare cursor to the pet. The count is the number of direction reversals in that visit
+  // where the leg before AND the leg after the turn each travelled >= minTravel px (so hand jitter and high-DPI noise
+  // never count).
   //   3 reversals -> 'light'   (a brief shy look / tiny sparkle: no heart, no growth, no voice)
   //  10 reversals -> 'medium'  (shy -> happy once)
   //  15 reversals -> 'heart'   (the heart effect + the `pet` growth event + line / voice), then the round is locked
-  // Each tier fires once per round. Release, > graceSec off the opaque pixels, a drag or Ctrl ends the round.
+  // Each tier fires once per round. > graceSec off the opaque pixels, a mouse button, Ctrl, sleep, a drag or the window
+  // hiding ends the round.
+  // 0.9.6: the sample stream is the hover poll, NOT a press-and-hold. 0.9.4 required the left button down, which lost
+  // every stroke to the drag arbitration (at 33 ms + 3 IPC round trips the first sample after mousedown is already more
+  // than 10 px from the press point, so main.js read it as "picked up") — users could not pet the pet at all.
   class StrokeTracker {
     constructor(opts) {
       opts = opts || {};
-      this.minTravel = opts.minTravel || 20; this.graceSec = opts.graceSec || 1;
+      this.minTravel = opts.minTravel || 20; this.graceSec = opts.graceSec || 1.2;
       this.tiers = Object.assign({ light: 3, medium: 10, heart: 15 }, opts.tiers || {});
       this.round = null;
     }
     get active() { return !!this.round; }
     get count() { return this.round ? this.round.count : 0; }
-    /** The mouse went down on the pet at window x. */
+    /** The cursor arrived on the pet at window x (0.9.6: hovering, no button — see main.js poll()). */
     press(x, t) { this.round = { x0: x, segStart: x, far: x, dir: 0, count: 0, fired: {}, lastOver: t, locked: false, legs: 0 }; }
-    /** The hand let go / a drag began / Ctrl went down: the round is over, nothing fires. */
+    /** A button went down / a drag began / Ctrl went down / it fell asleep: the round is over, nothing fires. */
     end() { const r = this.round; this.round = null; return r ? r.count : 0; }
-    /** A cursor sample while pressed: x in window px, `over` = on opaque pet pixels, `ctrl` = whip modifier held.
+    /** A cursor sample: x in window px, `over` = on opaque pet pixels, `ctrl` = whip modifier held.
      *  Returns 'light' | 'medium' | 'heart' the moment a tier is reached, else null. */
     move(x, t, over, ctrl) {
       const r = this.round; if (!r) return null;
@@ -331,7 +336,8 @@
       }
       return null;
     }
-    /** Current leg length (px) in the running direction — the host uses it to tell a stroke from a drag. */
+    /** Current leg length (px) in the running direction. Diagnostics only since 0.9.6 — the drag threshold no longer
+     *  consults the stroke state, it is a plain 10 px from the press point. */
     legTravel() { const r = this.round; return r && r.dir ? Math.abs(r.far - r.segStart) : 0; }
   }
 

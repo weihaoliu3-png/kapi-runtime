@@ -30,6 +30,18 @@ globalThis.window.__panel.setTab('wishes'); let b = el('body').innerHTML;
 assert.ok(b.includes('被摸 10 下') && b.includes('width:40%') && b.includes('要回助手那里'), 'wishes with progress and the platform tag');
 globalThis.window.__panel.setTab('finds'); b = el('body').innerHTML; assert.ok(b.includes('🍂') && b.includes('×2') && b.includes('旧钥匙') && b.includes('第 1 页'), 'finds grid');
 globalThis.window.__panel.setTab('journal'); b = el('body').innerHTML; assert.ok(b.includes('2026-10-11') && b.includes('300'), 'diary');
+// 0.9.6: the diary says who writes it and when — users took it for their own notes, or for an AI / cloud feature
+assert.ok(b.includes('每天自动写一行昨天的互动摘要') && b.includes('保留 30 天') && b.includes('存在你自己电脑上'), 'the note is shown above the entries');
+assert.ok(/class="note"/.test(b), 'the note has its own style, not a trailing hint');
+{ const kept = state.growth.journal; state.growth.journal = [];
+  await intervalFn(); const empty = el('body').innerHTML;                   // the 2 s refresh re-reads state.json
+  assert.ok(empty.includes('今天是第一天') && empty.includes('明天'), 'empty diary explains the first day instead of "none yet"');
+  assert.ok(!empty.includes('还没有'), 'the old bare "none yet" is gone');
+  assert.ok(empty.includes('每天自动写一行昨天的互动摘要'), 'the note is there on day one too');
+  state.growth.journal = kept; await intervalFn(); }
+for (const lang of ['zh', 'en']) { const P = globalThis.I18N.strings[lang].growth.panel;
+  for (const k of ['journalNote', 'journalEmpty']) assert.ok(typeof P[k] === 'string' && P[k].length > 10, lang + ' panel.' + k); }
+assert.ok(!/它每天自动写|Today is day one/.test(html), 'the wording lives in i18n.js, not hard-coded in the page');
 // 0.9.3: the window is reused — it announces itself, and `notebook-open` from the pet window re-points it at a pet
 assert.ok(emitted.some(([n]) => n === 'notebook-ready'), 'notebook-ready emitted'); assert.ok(emitted.some(([n, p]) => n === 'notebook-loaded' && p.ok), 'notebook-loaded ok');
 assert.ok(typeof listeners['notebook-open'] === 'function', 'listens for notebook-open');

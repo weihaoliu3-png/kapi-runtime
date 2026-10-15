@@ -59,4 +59,23 @@ for (const lang of ['zh', 'en']) { const G = I18N.strings[lang].growth.game; for
   assert.equal(r3.tick(29.99), false); assert.equal(r3.tick(30), true); assert.equal(r3.tick(31), false);
   console.log('catch round ok'); }
 assert.deepEqual(Object.keys(GROWTH_DEFS.CATCH_ACTIONS).sort(), ['bird', 'cartoon', 'cat', 'dog', 'dog-large', 'dog-small', 'human', 'kitten', 'rabbit', 'rodent']);
+
+// ---------- 0.9.6: a hit is also a face (the lunge alone read as "nothing happened") ----------
+{ const main = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
+  // surprise first, then delight; one timer handle, cleared on every hit, so a streak replaces instead of queueing
+  assert.ok(main.includes('function catchFace()') && main.includes('clearTimeout(catchFaceTimer)'), 'the hit reaction replaces the running one');
+  assert.ok(/catchFaceTimer = setTimeout\(\(\) => \{\s*engine\.showExpression\('surprised', 450\)/.test(main), 'surprised ~450 ms, 100 ms after the hit');
+  assert.ok(/showExpression\('happy', 900\)/.test(main), 'then happy ~900 ms');
+  assert.ok(/\}, 100\);/.test(main) && /\}, 450\);/.test(main), 'the 100 ms delay and the 450 ms hand-off');
+  assert.ok(main.includes('catchFace();') && main.includes('appendLog(`catch-hit score=${g.round.score}`)'), 'a scored hit shows the face and logs the score');
+  // a click beside the dot: no face, only the log line
+  assert.ok(main.includes("{ appendLog('catch-miss'); return false; }") && !/catch-miss[\s\S]{0,80}catchFace/.test(main), 'a miss triggers no reaction');
+  // the round's closing face: happy on a win, sleepy / shy otherwise, after the per-hit reaction is dropped
+  assert.ok(main.includes('catchFaceCancel();') && main.includes("const won = score >= cfg.target"), 'the settlement cancels the pending hit face and judges the score');
+  assert.ok(main.includes("engine.showExpression(won ? 'happy' : (Math.random() < 0.5 ? 'sleepy' : 'shy'), 2500)"), 'win -> happy, otherwise sleepy / shy, each with its own duration so the pre-game face returns');
+  assert.ok(main.includes('say(G.game.over(score, best), false)'), 'the existing settlement line is kept');
+  assert.ok(main.includes('appendLog(`catch-end score=${score} ${won ? \'win\' : \'ok\'}'), 'catch-end carries the score and the verdict');
+  assert.ok(!/showExpression\(score > 0 \? 'happy' : 'sad'/.test(main), 'the old happy / sad settlement face is replaced');
+  // a click on the light still never becomes a normal click reaction
+  assert.ok(main.includes('if (catchGame && catchHit(e.clientX, e.clientY)) return;'), 'mousedown still swallows a hit before the click path'); }
 console.log('catch-light tests passed');

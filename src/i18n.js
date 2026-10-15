@@ -5,7 +5,7 @@
     'zh': {
       hint: '拖我 · 点我 · 按住我来回摸 · 左上角 🐾 照顾我 · 右键有菜单\n还想让我学什么？右键「教我新东西」，把你的想法告诉助手就行',
       noPet: '还没有宠物：用托盘 / 菜单栏的 Kapi 图标导入宠物包',
-      noPetHelp: '还没有找到宠物。\n\nKapi 本身只是个空壳子，宠物住在宠物包（.petpack）里：\n\n① 点任务栏 / 菜单栏里的 Kapi 图标 →「导入宠物包」，选那个 .petpack 文件\n② 或者直接双击 .petpack 文件\n\n如果你解压的是完整交付包：请确认 Kapi 和 pets 文件夹在同一层，别只把 Kapi 单独拖出来。\n\n（这期间桌宠窗口不会挡住你点东西；想关掉就点那个图标 →「退出」）',
+      noPetHelp: '还没有找到宠物。\n\n如果你解压的是完整的交付包（里面有 Kapi 和一个 pets 文件夹）：\n· 宠物在 pets 文件夹里，不是一个单独的文件，别去找 .petpack\n· 请把整个文件夹（Kapi 和 pets 放在一起）解压到同一个位置，然后双击里面的 Kapi；别只把 Kapi 单独拖出来\n\n如果你手上只有 Kapi、另外收到过一个 .petpack 文件：\n· 点任务栏 / 菜单栏里的 Kapi 图标 →「导入宠物包」选它，或者直接双击那个 .petpack\n\n（这期间桌宠窗口不会挡住你点东西；想关掉就点那个图标 →「退出」）',
       noPetMoved: '另外：macOS 这次是把 Kapi 放在一个只读的临时位置运行的（未签名的程序从下载文件夹直接打开时会这样），所以它看不到旁边的 pets 文件夹。请把整个文件夹拖到「应用程序」或桌面，再从那里打开。',
       needNewer: '这个宠物包需要新版本的 Kapi，请重新下载',
       notebookFail: (why) => `小本子没打开（${why}），已收起；桌宠照常。再点一次试试，还不行就托盘「诊断」把日志发来`,
@@ -42,7 +42,7 @@
         panel: { title: '小本子', tabs: { skills: '会了什么', wishes: '今日心愿', finds: '收藏', journal: '日记', chapters: '章节' },
                  learned: '学会的动作', standIn: '先凑合的（回助手那里教）', notYet: '还不会的（回助手那里教，说"教它…"）', expr: '表情', look: '转头', voice: '声音',
                  lookRing: '48 帧视频环顾', lookFrames: '8 个方向', lookNone: '还不会转头', voiceTts: '录好的声音', voiceBabble: '咿呀声', voiceSpecies: (s) => `真实叫声（${s}）`, voiceNone: '没有声音',
-                 wishesToday: '今天的心愿', platformWish: '（要回助手那里）', noFinds: '还没捡到东西。你离开一会儿再回来，说不定它会带点什么。', page: (n) => `第 ${n} 页`, empty: '还没有', bestCatch: (b) => `抓光点最高 ${b} 分`, games: (n) => `玩了 ${n} 局`,
+                 wishesToday: '今天的心愿', platformWish: '（要回助手那里）', noFinds: '还没捡到东西。你离开一会儿再回来，说不定它会带点什么。', page: (n) => `第 ${n} 页`, empty: '还没有', journalNote: '它每天自动写一行昨天的互动摘要，保留 30 天（存在你自己电脑上）', journalEmpty: '今天是第一天，明天第一次打开它就会写下今天的事', bestCatch: (b) => `抓光点最高 ${b} 分`, games: (n) => `玩了 ${n} 局`,
                  hint: '想让它学什么，把这页里的"回助手那里"那句原样说给助手就行。', refreshNote: '面板每 2 秒自动刷新', stats: '统计', statStroke: '被摸', statClick: '被点', statType: '看你打字', statFeed: '吃饭', statWater: '喝水', statWhip: '被打', statGift: '收到礼物', statCatch: '抓光点最高',
                  // 0.9.4 skill cards: the notebook asks the pet to do things
                  recent: '最近学会', recentNone: '还在攒本领', handbook: '成长手册', outfitLabel: '服装',
@@ -66,7 +66,7 @@
     'en': {
       hint: 'Drag me · click me · hold and stroke me · 🐾 top-left to care for me · right-click for menu\nWant me to learn more? Right-click → “Teach me something new” and tell the assistant your idea',
       noPet: 'No pet yet: import a pet package from the Kapi tray / menu-bar icon',
-      noPetHelp: 'No pet found.\n\nKapi itself is just the shell — the pet lives in a pet package (.petpack):\n\n1) Click the Kapi icon in the tray / menu bar -> "Import pet package", and pick the .petpack file\n2) Or just double-click the .petpack file\n\nIf you unzipped a full delivery: make sure Kapi and the pets folder sit side by side — do not pull Kapi out on its own.\n\n(Meanwhile the pet window will not block your clicks; to close it, use that icon -> Quit.)',
+      noPetHelp: 'No pet found.\n\nIf you unzipped a full delivery (it contains Kapi and a pets folder):\n- The pet is inside the pets folder, not a separate file — there is no .petpack to look for\n- Keep Kapi and pets together in the same place and double-click Kapi there; do not pull Kapi out on its own\n\nIf you only have Kapi and were sent a .petpack file separately:\n- Click the Kapi icon in the tray / menu bar -> "Import pet package" and pick it, or just double-click the .petpack\n\n(Meanwhile the pet window will not block your clicks; to close it, use that icon -> Quit.)',
       noPetMoved: 'Also: macOS ran Kapi from a read-only temporary location this time (it does that for unsigned apps opened straight from Downloads), so it cannot see the pets folder next to it. Move the whole folder to Applications or the Desktop and open it from there.',
       needNewer: 'This pet package needs a newer Kapi. Please download again.',
       notebookFail: (why) => `The notebook did not open (${why}) and was closed; the pet is fine. Try again, or use tray → Diagnose and send the log`,
@@ -103,7 +103,7 @@
         panel: { title: 'Notebook', tabs: { skills: 'What I know', wishes: 'Today', finds: 'Finds', journal: 'Diary', chapters: 'Chapters' },
                  learned: 'Moves I learned', standIn: 'Making do for now (teach me at the assistant)', notYet: 'Not yet (tell the assistant "teach it to…")', expr: 'Expressions', look: 'Head turning', voice: 'Voice',
                  lookRing: '48-frame video look', lookFrames: '8 directions', lookNone: 'cannot turn yet', voiceTts: 'recorded voice', voiceBabble: 'babble', voiceSpecies: (s) => `real calls (${s})`, voiceNone: 'no voice',
-                 wishesToday: 'Today\'s wishes', platformWish: '(needs the assistant)', noFinds: 'Nothing found yet. Step away for a while; it may bring something back.', page: (n) => `page ${n}`, empty: 'none yet', bestCatch: (b) => `catch best ${b}`, games: (n) => `${n} rounds`,
+                 wishesToday: 'Today\'s wishes', platformWish: '(needs the assistant)', noFinds: 'Nothing found yet. Step away for a while; it may bring something back.', page: (n) => `page ${n}`, empty: 'none yet', journalNote: 'It writes one line about yesterday by itself, every day. It keeps the last 30 days, on your own computer only.', journalEmpty: 'Today is day one. Open it tomorrow and today will be written down.', bestCatch: (b) => `catch best ${b}`, games: (n) => `${n} rounds`,
                  hint: 'To teach it something, say the "at the assistant" line on this page to the assistant as it is.', refreshNote: 'refreshes every 2 s', stats: 'Stats', statStroke: 'petted', statClick: 'poked', statType: 'typed', statFeed: 'meals', statWater: 'drinks', statWhip: 'hits', statGift: 'gifts', statCatch: 'catch best',
                  // 0.9.4 skill cards: the notebook asks the pet to do things
                  recent: 'Latest move', recentNone: 'still collecting moves', handbook: 'Growth handbook', outfitLabel: 'Outfit',

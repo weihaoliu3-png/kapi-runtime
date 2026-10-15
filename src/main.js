@@ -22,7 +22,7 @@
   const t = () => T;
   let currentOutfit = 'default';
   let beh = null, winRect = null, monRect = null, cursorLogical = null, perchTimer = null, batteryTimer = null, rectTimer = null;
-  let growth = null, catchGame = null, findShow = null, lastInputSec = 0;
+  let growth = null, catchGame = null, catchFaceTimer = null, findShow = null, lastInputSec = 0;   // 0.9.6: one handle for the hit reaction, so repeats replace instead of stack
   let rules = null, lastRuleMinute = '', lastAppKey = '';                  // 0.9.3 pet.json.rules   // 0.9.0 growth: wishes / finds / diary / sulk / catch game
   let milestones = null, garden = null, props = { cup: null, flowers: {} }, videoFx = {}, interState = null, fxAbort = null, fxRun = 0, fxQueue = null;
   // Built-in real-video effects shipped with the runtime (src/fx/<id>/000..N.webp): every pet has them; a package may
@@ -84,7 +84,7 @@
       } else if (!monMissingLogged) { monMissingLogged = true; appendLog('monitor missing'); }
     } catch (_) {}
   }
-  const strokeTracker = new StrokeTracker({ minTravel: 20, graceSec: 1 });
+  const strokeTracker = new StrokeTracker({ minTravel: 20, graceSec: 1.2 });   // 0.9.6: hover stroking, 1.2 s off the pixels before the round ends
   let strokeGlow = null;                                                 // {t0, level} tiny sparkle near the head after a light / medium tier
   let typingGate = new KapiVoice.TypingGate();                           // 0.9.4: one real voice per typing cooldown (re-created per pet)
   let ruleSource = null;                                                 // 'typing' while a typing* rule runs its steps
@@ -592,7 +592,7 @@
     } catch (_) { return ''; }
   }
   async function poll() {
-    if (!engine || hidden) return;
+    if (!engine || hidden) { if (hidden) endStroke('hidden'); return; }   // 0.9.6: no samples while hidden -> the round must not hang on
     let sf, cp, wp;
     try { sf = await win.scaleFactor(); cp = (await cursorPosition()).toLogical(sf); wp = (await win.outerPosition()).toLogical(sf); }
     catch (e) { pollFail('cursor', e); return; }
@@ -606,18 +606,12 @@
       try {
         const nx = dragStartWin.x + (cp.x - dragStartCursor.x), ny = dragStartWin.y + (cp.y - dragStartCursor.y);
         if (!dragMoved) {
-          // 0.9.4: pressed on the pet but not yet a drag — is the hand stroking (horizontal back-and-forth around the
-          // press point) or picking it up (a clear move away)? Strokes feed the three-tier tracker; a drag ends the round.
-          const inWin = lx >= 0 && ly >= 0 && lx < canvas.clientWidth && ly < canvas.clientHeight;
-          const overPet = inWin && petAlphaAt(lx, ly) > 25;
-          const tier = strokeTracker.move(lx, t, overPet, ctrlHeld);
-          if (tier) strokeTier(tier);
+          // 0.9.6: the button means one thing only — pick it up. Petting is a hover stroke (see the hit-test branch
+          // below), so nothing has to be told apart here any more and the threshold is back to the simple, reliable
+          // 0.9.3 one. 0.9.4 arbitrated between "stroking" and "lifting" inside the press, and at this poll rate the
+          // first sample was already past every stroke-friendly threshold: the pet got picked up, never petted.
           const ddx = cp.x - dragStartCursor.x, ddy = cp.y - dragStartCursor.y;
-          const stroking = strokeTracker.active && strokeTracker.count >= 1;
-          const horizontal = Math.abs(ddx) > 2 * Math.abs(ddy);
-          const becomesDrag = stroking ? (Math.abs(ddy) > 70 || strokeTracker.legTravel() > 140)      // a stroke only turns into a drag on a long, clear move
-                                       : (horizontal ? Math.hypot(ddx, ddy) > 48 : Math.hypot(ddx, ddy) > 10);   // a first sideways leg is given room to turn back
-          if (becomesDrag) { dragMoved = true; strokeTracker.end(); }
+          if (Math.hypot(ddx, ddy) > 10) { dragMoved = true; appendLog('drag-start'); }
         }
         if (dragMoved) {
           if (!engine.drag.active) { engine.dragStart(grabPoint); prevDragV = null; }
@@ -649,7 +643,21 @@
       const overPaw = isOver(pawEl, lx, ly);
       if (overPet || overUi || overPaw || careEl.style.display === 'block') pawShownUntil = nowSec() + 0.8;
       pawEl.style.display = nowSec() < pawShownUntil ? 'flex' : 'none';
-      // Petting (0.9.4) is a press-and-hold stroke anywhere on visible pet pixels — see the dragging branch above and strokeTier().
+      // Petting (0.9.6, as before 0.9.4): no button at all — the bare cursor sweeping back and forth across opaque pet
+      // pixels is the stroke. Every hover sample feeds the tracker; `over` false keeps the round alive for graceSec so
+      // a turn that clips a transparent corner still counts. Ctrl belongs to the whip and sleep must not be tickled.
+      // Catch the light is excluded too: chasing the dot sweeps the cursor across the pet exactly like a stroke, which
+      // would hand out hearts and growth for playing and fight the game's own hit reaction for the face.
+      const asleep = !!(care && care.s.sleeping);
+      if (!dragging && !ctrlHeld && !asleep && !catchGame) {
+        if (overPet && !strokeTracker.active) { strokeTracker.press(lx, t); logStrokeStart(); }
+        if (strokeTracker.active) {
+          const before = strokeTracker.count;
+          const tier = strokeTracker.move(lx, t, overPet, false);
+          if (tier) { appendLog(`stroke-tier ${tier} count=${strokeTracker.count}`); strokeTier(tier); }
+          else if (!strokeTracker.active && before) appendLog(`stroke-end away count=${before}`);   // > graceSec off the opaque pixels
+        }
+      } else endStroke(ctrlHeld ? 'ctrl' : catchGame ? 'game' : 'sleep');   // a held button already ended it in mousedown
       visible = overPet || overUi || (careEl.style.display === 'block' && isOver(careEl, lx, ly)) || isOver(pawEl, lx, ly);
     } catch (e) { pollFail('hit', e); }
     // Pass-through is re-asserted every 1.5 s even when unchanged: the OS-side flag and our memory of it can drift
@@ -711,10 +719,25 @@
     dragStartCursor = (await cursorPosition()).toLogical(sf); dragStartWin = (await win.outerPosition()).toLogical(sf);
     dragging = true; dragMoved = false; mouseDownAt = performance.now(); prevCursorForV = null;
     grabPoint = { x: (e.clientX - PAD_SIDE) / Math.max(1e-6, scale), y: (e.clientY - PAD_TOP) / Math.max(1e-6, scale) };
-    if (!ctrlHeld) strokeTracker.press(e.clientX, performance.now() / 1000);   // a new stroking round (0.9.4)
+    endStroke('press');                                                    // 0.9.6: a button down is never a stroke, it is a grab
   });
-  // 0.9.4 three-tier stroking: 3 reversals = a light touch, 10 = a visible reaction, 15 = the heart + the `pet` growth event.
-  // The care system's 2-minute `pet` cooldown still rules the reward: inside it the heart is only visual (no growth, no voice).
+  // 0.9.6 stroking is hover-only (see poll()): 3 reversals = a light touch, 10 = a visible reaction, 15 = the heart +
+  // the `pet` growth event. The care system's 2-minute `pet` cooldown still rules the reward: inside it the heart is
+  // only visual (no growth, no voice).
+  // Log throttling, same idea as 0.9.4's `idle-skipped`: the cursor crosses the pet constantly on its way elsewhere, and
+  // appendLog rewrites the whole 120-line file per call. A round that never counted a reversal is just the cursor
+  // passing by, so only its (throttled) start is worth a line — otherwise the lines that matter get evicted.
+  let strokeStartLoggedAt = 0;
+  function logStrokeStart() {
+    const now = performance.now();
+    if (now - strokeStartLoggedAt < 2000) return;
+    strokeStartLoggedAt = now; appendLog('stroke-start');
+  }
+  function endStroke(why) {
+    if (!strokeTracker.active) return;
+    const n = strokeTracker.end();
+    if (n) appendLog(`stroke-end ${why} count=${n}`);
+  }
   function strokeTier(tier) {
     if (!engine || !care) return;
     engine.userInput();
@@ -742,8 +765,7 @@
     ctx.restore();
   }
   window.addEventListener('mouseup', async (e) => {
-    strokeTracker.end();                                                    // the round ends with the press, whatever it reached
-    if (!dragging) return;
+    if (!dragging) return;                                                  // 0.9.6: the stroke round ended at mousedown; the hover poll starts a fresh one
     dragging = false;
     if (dragMoved) {
       engine.dragEnd(); await refreshRects();
@@ -752,7 +774,8 @@
       else if (beh && beh.checkEdgeAfterDrag()) { /* cling then climb back */ }
       else await keepOnScreen();
     }
-    else if (performance.now() - mouseDownAt < 400) { if (beh && beh.mode === 'peek') beh.unpeek(); else if (care && care.s.sleeping) care.wake(false); else if (growth && growth.sulking()) { engine.showExpression('angry', 1500); const L = T.growth.sulkIgnore; say(L[Math.floor(Math.random() * L.length)]); growth.record('click'); }
+    else if (performance.now() - mouseDownAt < 400) { appendLog('click');   // short press, never became a drag (0.9.6 log)
+      if (beh && beh.mode === 'peek') beh.unpeek(); else if (care && care.s.sleeping) care.wake(false); else if (growth && growth.sulking()) { engine.showExpression('angry', 1500); const L = T.growth.sulkIgnore; say(L[Math.floor(Math.random() * L.length)]); growth.record('click'); }
       else { engine.click((e.clientY - PAD_TOP) / Math.max(1, dispH)); if (milestones) milestones.record('click'); if (growth) growth.record('click'); fireRule('click'); } }
   });
   // no double-click action (0.8.12): quick repeated clicks used to pop the care panel by accident; the panel opens only
@@ -971,6 +994,7 @@
     if (!engine || catchGame || (care && care.s.sleeping)) return false;
     const G = T.growth; const cfg = catchCfg();
     if (beh) beh.stopWalk('interrupted');
+    catchFaceCancel();
     catchGame = { round: new CatchRound(cfg, performance.now() / 1000), cfg, x: PAD_SIDE + dispW * 0.5, y: PAD_TOP + dispH * 0.5, tx: 0, ty: 0, nextMove: 0, hitAt: 0, r: Math.max(14, dispW * 0.07) };
     pickDot(); say(G.game.start(cfg.durationSec)); sound('pop', 0.4); engine.showExpression('surprised', 1500);
     appendLog(`catch-start ${cfg.durationSec}s target ${cfg.target} action ${cfg.action} (${cfg.actionSource}, ${cfg.species})`);
@@ -1004,18 +1028,35 @@
   }
   function catchHit(x, y) {
     const g = catchGame; if (!g) return false;
-    if (Math.hypot(x - g.x, y - g.y) > g.r * 1.6) return false;
+    if (Math.hypot(x - g.x, y - g.y) > g.r * 1.6) { appendLog('catch-miss'); return false; }   // a click next to the dot: no score, no face (0.9.6)
     if (!g.round.hit()) return true;
     g.hitAt = performance.now(); pickDot(); sound('pop', 0.35); reaction('happy', true, 0.3);
     engine.play(pet.manifest.actions[g.cfg.action] ? g.cfg.action : 'jump', PET_PRIORITY.user);
+    catchFace();                                                           // 0.9.6: a hit is also a face, not just a score
+    appendLog(`catch-hit score=${g.round.score}`);
     return true;
   }
+  // 0.9.6: the lunge alone read as "nothing happened" — a hit now shows surprise, then delight. Rapid hits REPLACE the
+  // running reaction instead of queueing (one handle, cleared first), so a good streak never strobes the face.
+  function catchFace() {
+    clearTimeout(catchFaceTimer);
+    catchFaceTimer = setTimeout(() => {
+      engine.showExpression('surprised', 450);
+      catchFaceTimer = setTimeout(() => { catchFaceTimer = null; engine.showExpression('happy', 900); }, 450);
+    }, 100);
+  }
+  function catchFaceCancel() { clearTimeout(catchFaceTimer); catchFaceTimer = null; }
   function endCatchGame() {
     const g = catchGame; catchGame = null; if (!g) return; const G = T.growth; const score = g.round.score, cfg = g.cfg;
     const best = growth ? (growth.st.growth.best.catch || 0) : 0;
     if (growth) growth.record('game', score);                                  // one settlement per round: catchGame is null from here on
-    say(G.game.over(score, best), false); engine.showExpression(score > 0 ? 'happy' : 'sad', 2500); sound(score >= best && score > 0 ? 'fanfare' : 'chime', 0.4);
-    appendLog(`catch-end ${score}/${cfg.target} in ${cfg.durationSec}s`);
+    // one closing face on top of the usual settlement line; the per-hit reaction is dropped so it cannot overwrite it,
+    // and every expression carries its own duration, so the pet is back to its pre-game face when it expires (0.9.6)
+    catchFaceCancel();
+    const won = score >= cfg.target;
+    say(G.game.over(score, best), false); sound(score >= best && score > 0 ? 'fanfare' : 'chime', 0.4);
+    engine.showExpression(won ? 'happy' : (Math.random() < 0.5 ? 'sleepy' : 'shy'), 2500);
+    appendLog(`catch-end score=${score} ${won ? 'win' : 'ok'} ${score}/${cfg.target} in ${cfg.durationSec}s`);
     // "I want to learn …" only where the move fits the character: cats a pounce, birds a peck, people a tap; others just settle
     if (score >= cfg.target && cfg.learnKey && growth && !growth.st.growth.catchAsked) { growth.st.growth.catchAsked = cfg.learnKey; const line = G.game[cfg.learnKey]; if (line) setTimeout(() => say(line, true), 4000); }
   }
@@ -1213,7 +1254,7 @@
     if (c === 'lookFollow') { if (!hasLookAssets()) { panelAck(c, '', { ok: false, reason: 'unknown' }); return; } await setLookFollow(p.on !== false); panelAck(c, settings.lookFollow ? 'on' : 'off', { ok: true }); return; }
     panelAck(c, p.action, { ok: false, reason: 'rejected' });
   });
-  listen('modifier-state', (e) => { ctrlHeld = !!(e.payload && e.payload.ctrl); if (ctrlHeld) strokeTracker.end(); if (!ctrlHeld) { whipPrev = null; whipMarks = []; whipTrail = []; whipFlash = null; drawWhip(); } });
+  listen('modifier-state', (e) => { ctrlHeld = !!(e.payload && e.payload.ctrl); if (ctrlHeld) endStroke('ctrl'); if (!ctrlHeld) { whipPrev = null; whipMarks = []; whipTrail = []; whipFlash = null; drawWhip(); } });
   // 0.8.16: the user clicking around the desktop (not on the pet): a glance that way, a startle on a click burst
   listen('mouse-press', async (e) => {
     if (!engine || !beh || hidden) return; const p = e.payload || {};

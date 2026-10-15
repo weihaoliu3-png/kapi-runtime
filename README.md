@@ -22,6 +22,23 @@ npm run build         # 产出 src-tauri/target/release/bundle/…
 
 不签名（已定案）：Mac 首次打开要在"系统设置 → 隐私与安全性"里点"仍要打开"；Windows 会弹 SmartScreen。skill 的交付话术里已写清楚。
 
+## v0.9.6 修复：抚摸改回"鼠标划过"（真实用户摸不到，P0）、抓光点命中有表情、小本子日记说清是谁写的
+
+基础版上线前的几件事。
+
+- **空状态文案把人引到了一个不存在的文件**（Mac 实机）：完整交付包里宠物是 `pets/<id>/` **文件夹**，根本没有 `.petpack` 文件，而对话框第一句就让用户"选那个 .petpack 文件"，于是用户在文件夹里翻了半天也没找到。现在按两种情况分开写：拿到完整交付包 → 把 Kapi 和 pets 放在一起、双击 Kapi；只拿到单独的 `.petpack` → 托盘导入或双击它。
+- **Mac 这一版不交付**（产品决定）：Mac 运行器没通过实机验收（未签名 → App Translocation → 启动了但看不到 pets）。skill 侧 `package_pet.py` / `hatch.py finalize` 对 mac 直接报错（内部测试 `KAPI_ALLOW_MAC=1`），对用户只说"Mac 版还在测试"。运行器代码本身仍然两个平台都编译，恢复时只需放回 `Kapi-mac.zip` + 改回 skill 话术。
+
+- **抚摸回到"鼠标划过"，彻底去掉"按住摸"（P0，真实用户反馈"抚摸根本摸不到"）**：现象是在桌宠身上按住左键想摸，它直接被拎起来。根因在 0.9.4 的仲裁：抚摸被改成"按住 + 来回划"，和拖拽抢同一个输入流；而 `poll()` 每 33 ms 还要等 3 个 IPC 往返（`scaleFactor` / `cursorPosition` / `outerPosition`），实际采样率远低于 30 Hz，按下后**第一个**采样点往往已经离原点 > 10 px，`main.js` 的 `horizontal ? > 48 : > 10` 当场判成拖拽、`strokeTracker.end()` 清掉本轮——抚摸永远走不到第 3 次折返。这个仲裁在沙盒里无法真机验证（见 `PRODUCT.md` C3），所以不修它，而是**回到 0.9.3 之前的方案：抚摸不用任何按键**。
+  - 采样点来自 `poll()` 的命中测试分支（它已经算好了 `overPet` 和窗口内坐标 `lx`）：没有按下鼠标、没按 Ctrl、没睡着时，光标第一次落到不透明像素上就 `StrokeTracker.press(lx, t)` 开一轮，之后每个采样点喂 `move(lx, t, overPet, false)`。`over` 传真实值（不是常量 `true`）：离开不透明像素后的 1.2 秒（`graceSec`）内仍算同一轮，所以一次折返擦过透明边角不会清零。
+  - 一轮结束的 6 个原因，各记一行 `stroke-end <reason>`：`away`（离开桌宠超过 1.2 秒）、`press`（按下鼠标）、`ctrl`（按下 Ctrl，鞭子要用光标）、`sleep`（睡着了）、`game`（抓光点开局——追光点时光标正好在它身上来回扫，和抚摸的手势一模一样，不隔开会"玩一局顺手领一堆爱心和养成"，还会和 1.2 的命中表情抢脸）、`hidden`（窗口隐藏，没有采样点了）、以及拖拽（`press` 已经覆盖）。
+  - **按键现在只有一个意思：拎起来**。拖拽分支里"按住抚摸"的全部代码删掉（`strokeTracker.move` 调用、`stroking` / `becomesDrag` 特判、48 px / 70 px / 140 px 三个阈值），阈值回到 0.9.3 那个简单可靠的版本：按下后 `Math.hypot(ddx, ddy) > 10` 即进入拖拽。短按抬起（< 400 ms 且没进入拖拽）仍是点击，逻辑没动。`mousedown` 调 `endStroke('press')`。
+  - 三档不变：3 / 10 / 15 次有效折返 → 害羞 / shy→happy / 爱心 + `pet` 养成事件，`minTravel` 20 画布像素（手抖、高 DPI 抖动不计），每档一轮只触发一次，爱心后本轮锁定，`strokeTier()` 一行没改；两分钟 `pet` 养成冷却照旧（冷却中第 15 次只给视觉爱心）。
+  - **诊断日志**（`kapi-debug.log`）：`stroke-start`、`stroke-tier <light|medium|heart> count=<n>`、`stroke-end <reason> count=<n>`、`drag-start`、`click`。用户一分钟就能自测："划几下有没有 `stroke-start` / `stroke-tier`""按住拖是不是只有 `drag-start`"。两处节流（和 0.9.4 的 `idle-skipped` 一个道理，`appendLog` 每行都要重写整个 120 行文件）：`stroke-start` 最多每 2 秒一条；一次折返都没数到的"路过"不记 `stroke-end`。
+- **抓光点命中要有表情反馈**：以前 `catchHit` 只加分 + 播 pounce / jump + 音效，脸上什么都没有，用户反馈"点中了也不知道点中没"。现在命中后 100 ms 先 `surprised`（450 ms）再 `happy`（900 ms）；连续命中**用新反馈替换旧的**，不排队、不闪烁（只有一个 `catchFaceTimer`，每次命中先 `clearTimeout`）；未命中（点在光点旁边）不触发任何反馈，只记一行 `catch-miss`。一局结束先 `catchFaceCancel()` 丢掉还没跑完的命中反馈，再按结果追加一次最终反馈：达到目标分 `happy`，否则 `sleepy` / `shy` 各半；结算台词和音效不变。每个表情都自带时长，到点自动过期，所以反馈结束就回到游戏前的脸。日志：`catch-hit score=<n>`、`catch-miss`、`catch-end score=<n> <win|ok> …`。点中光点仍然不触发普通点击反应（`mousedown` 里 `catchHit` 先拦截，没动）。
+- **小本子"日记"说清是谁写、什么时候更新**：用户以为日记是自己写的 / AI 生成的 / 云同步的。事实是运行器每天**第一次启动**时，把前一天本机统计的互动（点击、打字、照顾、抚摸、玩、花、心愿）写成一行摘要，最多留 30 天，纯本地。现在日记页标题下常驻一行说明"它每天自动写一行昨天的互动摘要，保留 30 天（存在你自己电脑上）"（不只在空状态时出现）；空状态从"还没有"改成"今天是第一天，明天第一次打开它就会写下今天的事"；每条记录前面的日期保持不变。文案在 `i18n.js`（`growth.panel.journalNote` / `journalEmpty`，zh + en），没有写死在 HTML 里。
+- 测试：`test/stroke-tiers.test.mjs` 重写成悬停采样驱动（2 次无反应 / 3 只 light / 9 不到 medium / 10 一次 medium / 14 无爱心 / 15 一次爱心 / 30 不重复 / < 20 px 抖动不计 / Ctrl 期间不计且清零 / 离开 > 1.2 秒后重新从零计数；另外断言**按下鼠标后不再有任何 tier 触发**，以及 48 / 140 px 那套仲裁已从 `main.js` 消失、五条日志都在、节流在）、`test/catch-light.test.mjs` 增加命中反馈一节（100 ms → surprised 450 → happy 900、单 timer handle、未命中无反馈、结算 win/ok 与最终表情、保留结算台词）、`test/panel.test.mjs` 增加日记断言（空日记出现首日文案且不再出现"还没有"、有记录时说明行也在、文案来自 i18n 而非 HTML）。Rust 没改，不需要 `cargo check`。
+
 ## v0.9.5 修复：没有宠物时窗口吞掉所有点击（Mac 实机，P0）、空状态说人话、换 logo
 
 - **没有宠物 = 整个桌面点不动（跨平台 P0，Mac 实机撞上）**：启动时先把桌宠窗口设成可点击（`main.js` 正常起点），而把"没有引擎就恢复点击穿透"那行写在了有宠物的 `else` 分支里；两个兜底（33 ms 的 `poll()` 和 1.5 秒看门狗）又都以 `if (!engine) return;` 开头。于是 `list_pets` 返回空时，一个透明、始终置顶、完全不穿透的 360×480 窗口永远浮在桌面上，盖住下面的窗口 —— 用户以为系统卡死，只能强制退出。现在：① 空宠物分支第一件事就是 `setIgnoreCursorEvents(true)`；② 新增一个**独立于宠物**的 1.5 秒守卫，只要没有引擎就把窗口按回穿透（不管是怎么走到这一步的）；③ 托盘「恢复交互」之后同样由这个守卫兜住。
