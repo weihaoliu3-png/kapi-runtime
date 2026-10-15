@@ -18,8 +18,19 @@
   const pawEl = document.getElementById('paw');
   const careEl = document.getElementById('care');
   let care = null, careTimer = null, stageScale = 1;
-  let T = I18N.pick();                       // UI strings; re-picked per pet from persona.language
+  let T = I18N.pick();                       // UI strings; re-picked per pet from persona.language + ui.json
+  let uiPack = null;                         // pets/<id>/ui.json, the skill's language pack for this pet
   const t = () => T;
+  // Text direction and the tray follow the pet's language. The tray menu is built in Rust before any pet is
+  // loaded, so it cannot read persona.language itself — it gets its labels pushed here instead, every time a
+  // pet is loaded or switched. A failure is never fatal: the tray simply keeps the labels it had.
+  function applyLocale(T2) {
+    try {
+      document.documentElement.setAttribute('dir', T2._dir || 'ltr');
+      document.documentElement.setAttribute('lang', T2._lang || 'en');
+    } catch (_) {}
+    invoke('set_tray_labels', { labels: { ...T2.tray } }).catch((e) => appendLog('tray labels: ' + e));
+  }
   let currentOutfit = 'default';
   let beh = null, winRect = null, monRect = null, cursorLogical = null, perchTimer = null, batteryTimer = null, rectTimer = null;
   let growth = null, catchGame = null, catchFaceTimer = null, findShow = null, lastInputSec = 0;   // 0.9.6: one handle for the hit reaction, so repeats replace instead of stack
@@ -121,7 +132,10 @@
     KapiVoice.loadBank();                                              // real animal recordings index (0.8.16), no-op for a human pet
     const manifest = JSON.parse(await invoke('read_text', { path: join(info.dir, 'pet.json') }));
     let persona = {}; try { persona = JSON.parse(await invoke('read_text', { path: join(info.dir, 'persona.json') })); } catch (_) {}
-    if (manifest.schema !== 2) throw new Error(I18N.pick(persona.language).needNewer);
+    // ui.json: the UI text in this user's language, put here by the skill at packaging time. Optional — without
+    // it the built-in English / Chinese set is used, which is what every pet made before 0.9.7 has.
+    uiPack = null; try { uiPack = JSON.parse(await invoke('read_text', { path: join(info.dir, 'ui.json') })); } catch (_) {}
+    if (manifest.schema !== 2) throw new Error(I18N.pick(persona.language, uiPack).needNewer);
     // outfit: state.outfit (user's choice in the wardrobe) > pet.json.outfits.current > default layers/
     let stateOutfit = null; try { stateOutfit = JSON.parse(await invoke('read_text', { path: join(info.dir, 'state.json') })).outfit; } catch (_) {}
     const items = (manifest.outfits && manifest.outfits.items) || {};
@@ -164,7 +178,8 @@
     if (pr.cup) props.cup = await loadImage(join(info.dir, pr.cup));
     for (const k of ['1', '2', '3']) if (pr['flower' + k]) props.flowers[k] = await loadImage(join(info.dir, pr['flower' + k]));
     pet = { ...info, manifest, persona };
-    T = I18N.pick(persona.language);
+    T = I18N.pick(persona.language, uiPack);
+    applyLocale(T);
     await loadVoiceIndex();
     typingGate = new KapiVoice.TypingGate(KapiVoice.typingCooldownSec(manifest));   // 0.9.4 pet.json.voice.cooldowns.typingSec (default 60)
     strokeTracker.end(); strokeGlow = null;
@@ -955,7 +970,9 @@
     const restoreTimer = setTimeout(() => restoreInteraction('1.5s watchdog'), 1500);
     notebookWait = { timeout: setTimeout(() => { appendLog('timeout notebook (no dom-ready/loaded in 8 s)'); notebookSettled(false, 'timeout'); restoreInteraction('timeout'); }, 8000) };
     try {
-      await invoke('open_panel_window', { petDir: pet.dir, lang: pet.persona.language || 'zh-CN' });
+      // empty = let the notebook fall back to the OS language, the same way I18N.pick() does; it then loads the
+      // pet's own ui.json itself. (It used to default to zh-CN, so a pet with no language field forced Chinese.)
+      await invoke('open_panel_window', { petDir: pet.dir, lang: pet.persona.language || '' });
       appendLog('open_panel_window returned');
     } catch (e) {
       appendLog('load-error open_panel_window: ' + e); notebookSettled(false, String(e)); clearTimeout(restoreTimer); restoreInteraction('open failed');
@@ -1319,6 +1336,10 @@
   });
 
   // ---------- boot ----------
+  // Localise the tray from the OS language right away, before any pet is loaded. Without this an empty install
+  // (no pet yet) would sit on the English floor the Rust side builds the menu with, and the dialogs below would
+  // not match it. loadPet() pushes the pet's own language over this later.
+  applyLocale(T);
   try { await win.setIgnoreCursorEvents(false); } catch (_) {}      // known starting state for the pet window
   await loadSettings();
   await win.setAlwaysOnTop(!!settings.alwaysOnTop);

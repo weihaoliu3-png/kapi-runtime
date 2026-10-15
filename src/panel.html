@@ -107,11 +107,13 @@
   (async () => {
     // 0.9.3: this window is created hidden at start-up and reused; the pet window tells it which pet via the
     // `notebook-open` event (a ?dir= query still works for tests / old callers).
-    const q = new URLSearchParams(location.search); let dir = q.get('dir'); let lang = q.get('lang') || 'zh-CN';
+    const q = new URLSearchParams(location.search); let dir = q.get('dir'); let lang = q.get('lang') || 'en';
+    let uiPack = null;                       // pets/<id>/ui.json, loaded in load() once we know the pet dir
     let T = I18N.pick(lang), G = T.growth, P = G.panel;
     const invoke = window.__TAURI__.core.invoke; const emit = window.__TAURI__.event.emit; const listen = window.__TAURI__.event.listen;
     let sep = '/'; let join = (a, b) => a.replace(/[\\/]+$/, '') + sep + b;
-    function setDir(d, l) { dir = d; lang = l || lang; T = I18N.pick(lang); G = T.growth; P = G.panel; sep = dir.includes('\\') ? '\\' : '/'; }
+    // a different pet means a different language pack too — drop the old one, load() reads the new pet's
+    function setDir(d, l) { dir = d; lang = l || lang; uiPack = null; T = I18N.pick(lang); G = T.growth; P = G.panel; sep = dir.includes('\\') ? '\\' : '/'; }
     let tab = 'skills', pet = null, persona = null, state = null, settings = null, avatar = { key: '', src: '' };
     const esc = (x) => String(x).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const $ = (id) => document.getElementById(id);
@@ -119,6 +121,10 @@
       try {
         pet = JSON.parse(await invoke('read_text', { path: join(dir, 'pet.json') }));
         try { persona = JSON.parse(await invoke('read_text', { path: join(dir, 'persona.json') })); } catch (_) { persona = {}; }
+        // the pet's own language pack (optional, same file the pet window reads), then direction for RTL
+        try { uiPack = JSON.parse(await invoke('read_text', { path: join(dir, 'ui.json') })); } catch (_) { uiPack = null; }
+        T = I18N.pick(lang, uiPack); G = T.growth; P = G.panel;
+        try { document.documentElement.setAttribute('dir', T._dir || 'ltr'); document.documentElement.setAttribute('lang', T._lang || 'en'); } catch (_) {}
         try { state = JSON.parse(await invoke('read_text', { path: join(dir, 'state.json') })); } catch (_) { state = {}; }
         // look-follow lives in the Kapi folder's settings.json (0.9.4); missing = on, and the switch falls back to its optimistic state
         try { settings = JSON.parse(await invoke('read_text', { path: await invoke('settings_path') })); } catch (_) { settings = settings || null; }

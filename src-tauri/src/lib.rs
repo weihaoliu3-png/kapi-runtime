@@ -2,13 +2,35 @@
 //! All pet behaviour lives in the webview (src/main.js).
 
 use serde::Serialize;
-use std::{fs, io::Read, path::PathBuf};
+use std::{collections::HashMap, fs, io::Read, path::PathBuf, sync::Mutex};
 use fs4::fs_std::FileExt;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
-    AppHandle, Emitter, Manager,
+    AppHandle, Emitter, Manager, State,
 };
+
+/// Handles to the tray menu items, so their text can be replaced after start-up.
+///
+/// The tray menu has to exist before the first window does, which is before any pet — and therefore any
+/// persona.language — is known. So it is built with the English labels as a floor and the webview pushes the
+/// right ones through `set_tray_labels` the moment it knows the language (on start-up from the OS locale, and
+/// again on every pet load / switch). Keys are the `tray.*` keys in src/i18n.js.
+pub struct TrayLabels(pub Mutex<HashMap<String, MenuItem<tauri::Wry>>>);
+
+#[tauri::command]
+fn set_tray_labels(labels: HashMap<String, String>, state: State<'_, TrayLabels>) -> Result<(), String> {
+    let items = state.0.lock().map_err(|e| e.to_string())?;
+    for (key, text) in labels {
+        if text.trim().is_empty() {
+            continue;
+        }
+        if let Some(item) = items.get(&key) {
+            item.set_text(&text).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
 
 #[derive(Serialize, Clone)]
 pub struct PetInfo {
@@ -488,23 +510,40 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             list_pets, read_text, read_file_b64, write_text, settings_path, bundle_info, import_pet, export_pet,
-            active_window, battery_status, peer_pets, open_panel_window, close_panel_window, request_input_permission, input_watcher_state, launch_info
+            active_window, battery_status, peer_pets, open_panel_window, close_panel_window, request_input_permission, input_watcher_state, launch_info,
+            set_tray_labels
         ])
         .setup(|app| {
-            let show = MenuItem::with_id(app, "toggle", "显示 / 隐藏", true, None::<&str>)?;
-            let import = MenuItem::with_id(app, "import", "导入宠物包 (.petpack)…", true, None::<&str>)?;
-            let switch = MenuItem::with_id(app, "switch", "切换宠物", true, None::<&str>)?;
-            let export = MenuItem::with_id(app, "export", "导出当前宠物包…", true, None::<&str>)?;
-            let notebook = MenuItem::with_id(app, "notebook", "它的小本子", true, None::<&str>)?;
+            // English is only the floor: these were hardcoded Chinese until 0.9.7, which meant every user in
+            // every language read a Chinese tray menu. The webview replaces them via set_tray_labels as soon as
+            // it knows the language — from the OS locale at start-up, then from the pet's own pack.
+            let show = MenuItem::with_id(app, "toggle", "Show / Hide", true, None::<&str>)?;
+            let import = MenuItem::with_id(app, "import", "Import pet package (.petpack)…", true, None::<&str>)?;
+            let switch = MenuItem::with_id(app, "switch", "Switch pet", true, None::<&str>)?;
+            let export = MenuItem::with_id(app, "export", "Export current pet…", true, None::<&str>)?;
+            let notebook = MenuItem::with_id(app, "notebook", "Its notebook", true, None::<&str>)?;
             #[cfg(target_os = "macos")]
-            let typing = MenuItem::with_id(app, "typing", "启用打字互动（需要辅助功能权限）", true, None::<&str>)?;
-            let recover = MenuItem::with_id(app, "recover", "恢复交互（点不动时）", true, None::<&str>)?;
-            let diagnose = MenuItem::with_id(app, "diagnose", "诊断（出问题时点这个，再把日志发来）", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            let typing = MenuItem::with_id(app, "typing", "Enable typing reactions (needs Accessibility)", true, None::<&str>)?;
+            let recover = MenuItem::with_id(app, "recover", "Recover interaction (if clicks stop working)", true, None::<&str>)?;
+            let diagnose = MenuItem::with_id(app, "diagnose", "Diagnose (click this, then send the log)", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
                 &[&show, &notebook, #[cfg(target_os = "macos")] &typing, &import, &switch, &export, &PredefinedMenuItem::separator(app)?, &recover, &diagnose, &PredefinedMenuItem::separator(app)?, &quit],
             )?;
+            // keep the handles so set_tray_labels can retext them later; keys match tray.* in src/i18n.js
+            let mut tray_items: HashMap<String, MenuItem<tauri::Wry>> = HashMap::new();
+            tray_items.insert("show".into(), show.clone());
+            tray_items.insert("notebook".into(), notebook.clone());
+            tray_items.insert("import".into(), import.clone());
+            tray_items.insert("switch".into(), switch.clone());
+            tray_items.insert("export".into(), export.clone());
+            tray_items.insert("recover".into(), recover.clone());
+            tray_items.insert("diagnose".into(), diagnose.clone());
+            tray_items.insert("quit".into(), quit.clone());
+            #[cfg(target_os = "macos")]
+            tray_items.insert("typing".into(), typing.clone());
+            app.manage(TrayLabels(Mutex::new(tray_items)));
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&menu)

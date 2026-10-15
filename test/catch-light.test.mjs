@@ -41,7 +41,9 @@ assert.equal(catchLightConfig({ actions: {}, voice: { kind: 'tts', preset: 'male
 for (const sp of ['dog', 'dog-large', 'rabbit', 'rodent']) assert.equal(catchLightConfig({ actions: {}, voice: { species: sp } }).learnKey, null, sp + ': no prompt');
 assert.equal(catchLightConfig({ actions: {}, voice: {} }).learnKey, null, 'unknown: no prompt');
 assert.equal(catchLightConfig(withActs(['pounce'], { voice: { species: 'cat' } })).learnKey, null, 'already knows the pounce');
-for (const lang of ['zh', 'en']) { const G = I18N.strings[lang].growth.game; for (const k of ['wantPounce', 'wantPeck', 'wantTap']) assert.ok(typeof G[k] === 'string' && G[k].length > 4, lang + ' ' + k); assert.ok(G.start(10).includes('10'), lang + ' start line carries the duration'); }
+// I18N.strings is pure DATA now ({placeholder} templates, so a language pack can be plain json); pick() is what
+// turns the templates into the functions call sites use, so the assertions go through pick().
+for (const lang of ['zh', 'en']) { const G = I18N.pick(lang).growth.game; for (const k of ['wantPounce', 'wantPeck', 'wantTap']) assert.ok(typeof G[k] === 'string' && G[k].length > 4, lang + ' ' + k); assert.ok(G.start(10).includes('10'), lang + ' start line carries the duration'); }
 
 // one settlement per round, with a fake clock: 9.9 s no end, 10.0 s ends exactly once, hits after the end do not count
 { const cfg = catchLightConfig({ actions: {} }); let t = 5000; const r = new CatchRound(cfg, t);

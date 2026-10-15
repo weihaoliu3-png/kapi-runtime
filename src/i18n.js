@@ -1,29 +1,43 @@
-// Kapi UI strings. Locale = active pet's persona.language, else OS language. Unknown locales fall back to English.
+// Kapi UI strings. Locale = active pet's persona.language, else OS language.
+//
+// Two layers:
+//   1. BUILT-IN (this file): English is the floor, Simplified Chinese is the second built-in set. These two ship
+//      inside the binary so a pet package with no language file still reads correctly.
+//   2. PACK (pets/<id>/ui.json): the skill drops one in at packaging time, in whatever language the user speaks.
+//      It is merged OVER the built-in set key by key, so a missing or mistranslated key quietly falls back
+//      instead of showing a raw key on screen. Adding a language = adding a json to the skill. No rebuild.
+//
+// Everything here is DATA — plain strings with {placeholders}. Entries that need real logic (plurals, "new
+// record", list joining) keep that logic in FORMATTERS below and read their pieces from the data, so a pack is
+// always pure JSON and can be written, reviewed and checked without running any code.
 (function (global) {
   'use strict';
   const STRINGS = {
     'zh': {
-      hint: '拖我 · 点我 · 按住我来回摸 · 左上角 🐾 照顾我 · 右键有菜单\n还想让我学什么？右键「教我新东西」，把你的想法告诉助手就行',
+      _dir: 'ltr', listSep: '、',
+      hint: '拖我 · 点我 · 光标在我身上来回划 · 左上角 🐾 照顾我 · 右键有菜单\n还想让我学什么？右键「教我新东西」，把你的想法告诉助手就行',
       noPet: '还没有宠物：用托盘 / 菜单栏的 Kapi 图标导入宠物包',
       noPetHelp: '还没有找到宠物。\n\n如果你解压的是完整的交付包（里面有 Kapi 和一个 pets 文件夹）：\n· 宠物在 pets 文件夹里，不是一个单独的文件，别去找 .petpack\n· 请把整个文件夹（Kapi 和 pets 放在一起）解压到同一个位置，然后双击里面的 Kapi；别只把 Kapi 单独拖出来\n\n如果你手上只有 Kapi、另外收到过一个 .petpack 文件：\n· 点任务栏 / 菜单栏里的 Kapi 图标 →「导入宠物包」选它，或者直接双击那个 .petpack\n\n（这期间桌宠窗口不会挡住你点东西；想关掉就点那个图标 →「退出」）',
       noPetMoved: '另外：macOS 这次是把 Kapi 放在一个只读的临时位置运行的（未签名的程序从下载文件夹直接打开时会这样），所以它看不到旁边的 pets 文件夹。请把整个文件夹拖到「应用程序」或桌面，再从那里打开。',
       needNewer: '这个宠物包需要新版本的 Kapi，请重新下载',
-      notebookFail: (why) => `小本子没打开（${why}），已收起；桌宠照常。再点一次试试，还不行就托盘「诊断」把日志发来`,
-      imported: (n, v) => `已导入「${n}」 v${v}`, importFail: '导入失败：', onlyOne: '只有这一只', switched: (n) => `切换到「${n}」`,
+      notebookFail: '小本子没打开（{why}），已收起；桌宠照常。再点一次试试，还不行就托盘「诊断」把日志发来',
+      imported: '已导入「{n}」 v{v}', importFail: '导入失败：', onlyOne: '只有这一只', switched: '切换到「{n}」',
       exported: '已导出，把它发给助手就能继续教', exportFail: '导出失败：',
       reminder: '提醒时间到',
-      menu: { care: (n) => `照顾「${n}」（喂食 / 喝水 / 睡觉）`, actions: '动作', size: '大小', mute: '静音', onTop: '总在最前',
+      tray: { show: '显示 / 隐藏', notebook: '它的小本子', typing: '启用打字互动（需要辅助功能权限）', import: '导入宠物包 (.petpack)…',
+              switch: '切换宠物', export: '导出当前宠物包…', recover: '恢复交互（点不动时）', diagnose: '诊断（出问题时点这个，再把日志发来）', quit: '退出' },
+      menu: { care: '照顾「{n}」（喂食 / 喝水 / 睡觉）', actions: '动作', size: '大小', mute: '静音', onTop: '总在最前',
               import: '导入宠物包…', switch: '切换宠物', export: '导出当前宠物包…', hide: '隐藏', quit: '退出' },
-      care: { feed: '喂食', water: '喝水', pet: '抚摸', sleep: '睡觉', wake: '叫醒', hunger: '饱食', thirst: '水分', energy: '精力', mood: '心情', xp: 'XP', streak: (d) => `连续 ${d} 天`,
-              cooldown: (label, m) => `刚${label}过，${m} 分钟后再来。`, enough: '够了够了。', tickets: (o, h) => `🎫 服装券 ${o} · 节日券 ${h}（回助手那里兑换）`, close: '×',
-              firstToday: (xp, d) => `今日首次照顾 +${xp} XP · 连续 ${d} 天`, levelUp: (lv) => `升到 Lv.${lv}！`, got: ' 获得：', cooling: '冷却中',
+      care: { feed: '喂食', water: '喝水', pet: '抚摸', sleep: '睡觉', wake: '叫醒', hunger: '饱食', thirst: '水分', energy: '精力', mood: '心情', xp: 'XP', streak: '连续 {d} 天',
+              cooldown: '刚{label}过，{m} 分钟后再来。', enough: '够了够了。', tickets: '🎫 服装券 {o} · 节日券 {h}（回助手那里兑换）', close: '×',
+              firstToday: '今日首次照顾 +{xp} XP · 连续 {d} 天', levelUp: '升到 Lv.{lv}！', got: ' 获得：', cooling: '冷却中',
               fallback: { fed: '好吃。', watered: '咕咚。', pet: '嗯……舒服。', sleep: 'Zzz', wakeUp: '睡饱了。', wokenUp: '……谁叫我。', hungry: '……有点饿。', thirsty: '想喝水。', tired: '困了……', lonely: '你好久没理我了。' },
               titles: ['新手饲养员', '常客', '熟人', '好朋友', '铲屎官', '搭子', '家人', '老朋友', '知己', '灵魂伴侣'],
               rewards: { 2: '新台词包：撒娇', 3: '服装券 ×1', 4: '新台词包：碎碎念', 5: '服装券 ×1', 6: '成长阶段：少年期（体型 +10%）', 7: '服装券 ×1', 8: '新台词包：老朋友', 9: '节日皮肤券 ×1', 10: '成长阶段：成年期（体型 +20%）' } },
       beh: { follow: '走哪跟哪。',  hide: '我躲一会儿。', coming: '来了来了。', perch: '这里视野不错。', perchHint: '点一下你想让我坐的窗口。', typingLong: '打这么多字，歇会儿？', lowBattery: '电量只剩 {p}% 了！', greet: '嗨，{name}。', thrown: '……你扔我？', cling: '扒住了扒住了！', climbBack: '差点掉下去。', dizzy: '头、头好晕……', gift: '给我的？……这个不能吃。', giftHover: '那是什么？' },
       wardrobe: { menu: '衣柜', default: '原装' },
       panelCmd: { busy: '等它做完这个再说。', sleeping: '它在睡觉，先叫醒它。', noWalk: '它还不会真正走路（没有合格的走路循环）。', unknown: '小本子里的这个动作它还不会。' },
-      src: { olderBundle: (b, have) => `这个文件夹里的它是 v${b}，电脑上已经有更新的 v${have}，显示的是 v${have}。想换成这个文件夹的版本，先在右键「导出」里看一下，或者重新用更高版本的包。` },
+      src: { olderBundle: '这个文件夹里的它是 v{b}，电脑上已经有更新的 v{have}，显示的是 v{have}。想换成这个文件夹的版本，先在右键「导出」里看一下，或者重新用更高版本的包。' },
       perm: { hint: '想让它跟着你打字点头、长花、用 Ctrl 鞭子？托盘 → 「启用打字互动」，给一次辅助功能权限就行；不开也不影响其他玩法。', howTo: '在「系统设置 → 隐私与安全性 → 辅助功能」里打开 Kapi 的开关，回来就生效，不用重启。', on: '打字互动已开启。' },
       growth: {
         menu: '它的小本子', play: '玩一会儿（抓光点）',
@@ -31,104 +45,179 @@
         wishDone: { stroke: '……今天的愿望实现了一个。', click: '戳够了，满意了。', type: '你今天写了好多，我都看着呢。', feed: '吃饱了，心愿达成。', water: '水喝够了。', sleep: '睡了个好觉。', flower: '开花了！', game: '玩得开心。', gift: '收下了，谢谢。', notebook: '你看了我的本子……', learn: '我学会新东西了！这是今天最开心的事。' },
         wishAll: '今天的愿望都实现了！', coins: '心意', coinsHint: '心意攒着，以后换东西',
         find: { leaf: '落叶', pebble: '小石子', cap: '瓶盖', plane: '纸飞机', yarn: '毛线团', wrapper: '糖纸', feather: '羽毛', key: '旧钥匙', shell: '贝壳', ribbon: '丝带', clip: '回形针', cookie: '半块饼干', plush: '小玩偶', coin: '硬币', acorn: '橡果', stub: '票根', sock: '一只袜子', star: '星星' },
-        findSay: (name) => `你不在的时候我捡到一个${name}，给你。`, findNew: '（新的！）', findPage: '收藏满了一页——我想换个新造型，服装券 +1，带我回助手那里换。',
+        findSay: '你不在的时候我捡到一个{name}，给你。', findNew: '（新的！）', findPage: '收藏满了一页——我想换个新造型，服装券 +1，带我回助手那里换。',
         sulkStart: '……哼。', sulkIgnore: ['……', '不理你。', '哼。'], sulkEnd: '……好吧，原谅你了。',
-        jType: (n) => `你今天打了 ${n} 个字。`, jStroke: (n) => `摸了我 ${n} 下。`, jCare: (n) => `照顾了我 ${n} 次。`, jFind: (n) => `我捡回来 ${n} 个东西。`, jGame: (b) => `抓光点最高 ${b} 分。`, jWhip: (n) => `被打了 ${n} 下，记着呢。`,
+        jType: '你今天打了 {n} 个字。', jStroke: '摸了我 {n} 下。', jCare: '照顾了我 {n} 次。', jFind: '我捡回来 {n} 个东西。', jGame: '抓光点最高 {b} 分。', jWhip: '被打了 {n} 下，记着呢。',
         jQuiet: '今天很安静。', jHappy: '今天挺开心的。', jOk: '还行。', jSad: '有点寂寞。',
         chapter: { c1: '刚回家', c2: '混熟了', c3: '老朋友', c4: '心有灵犀', c5: '家人', c6: '少年期', c7: '默契', c8: '形影不离', c9: '老搭档', c10: '成年期' },
         task: { newAction: '教它一个新动作（回助手那里）', newAction2: '再教它两个动作（回助手那里）', outfit: '给它换一套衣服（用服装券，回助手那里）', care3: '把吃饭、喝水、睡觉都教会（回助手那里）' },
         taskDone: '已完成', taskTodo: '还没做',
-        game: { start: (s) => `抓光点！点那个光点，${s} 秒。`, over: (n, best) => `${n} 分${n >= best && n > 0 ? '，新纪录！' : ''}`, best: (b) => `最高 ${b} 分`, wantPounce: '分数够高了——我想学一个扑的动作，带我回助手那里教。', wantPeck: '分数够高了——我想学一个啄的动作，带我回助手那里教。', wantTap: '分数够高了——我想学一个拍光点的动作，带我回助手那里教。' },
+        game: { start: '抓光点！点那个光点，{s} 秒。', overOne: '{n} 分', overMany: '{n} 分', newRecord: '，新纪录！', best: '最高 {b} 分', wantPounce: '分数够高了——我想学一个扑的动作，带我回助手那里教。', wantPeck: '分数够高了——我想学一个啄的动作，带我回助手那里教。', wantTap: '分数够高了——我想学一个拍光点的动作，带我回助手那里教。' },
         panel: { title: '小本子', tabs: { skills: '会了什么', wishes: '今日心愿', finds: '收藏', journal: '日记', chapters: '章节' },
                  learned: '学会的动作', standIn: '先凑合的（回助手那里教）', notYet: '还不会的（回助手那里教，说"教它…"）', expr: '表情', look: '转头', voice: '声音',
-                 lookRing: '48 帧视频环顾', lookFrames: '8 个方向', lookNone: '还不会转头', voiceTts: '录好的声音', voiceBabble: '咿呀声', voiceSpecies: (s) => `真实叫声（${s}）`, voiceNone: '没有声音',
-                 wishesToday: '今天的心愿', platformWish: '（要回助手那里）', noFinds: '还没捡到东西。你离开一会儿再回来，说不定它会带点什么。', page: (n) => `第 ${n} 页`, empty: '还没有', journalNote: '它每天自动写一行昨天的互动摘要，保留 30 天（存在你自己电脑上）', journalEmpty: '今天是第一天，明天第一次打开它就会写下今天的事', bestCatch: (b) => `抓光点最高 ${b} 分`, games: (n) => `玩了 ${n} 局`,
+                 lookRing: '48 帧视频环顾', lookFrames: '8 个方向', lookNone: '还不会转头', voiceTts: '录好的声音', voiceBabble: '咿呀声', voiceSpecies: '真实叫声（{s}）', voiceNone: '没有声音',
+                 wishesToday: '今天的心愿', platformWish: '（要回助手那里）', noFinds: '还没捡到东西。你离开一会儿再回来，说不定它会带点什么。', page: '第 {n} 页', empty: '还没有', journalNote: '它每天自动写一行昨天的互动摘要，保留 30 天（存在你自己电脑上）', journalEmpty: '今天是第一天，明天第一次打开它就会写下今天的事', bestCatch: '抓光点最高 {b} 分', games: '玩了 {n} 局',
                  hint: '想让它学什么，把这页里的"回助手那里"那句原样说给助手就行。', refreshNote: '面板每 2 秒自动刷新', stats: '统计', statStroke: '被摸', statClick: '被点', statType: '看你打字', statFeed: '吃饭', statWater: '喝水', statWhip: '被打', statGift: '收到礼物', statCatch: '抓光点最高',
-                 // 0.9.4 skill cards: the notebook asks the pet to do things
                  recent: '最近学会', recentNone: '还在攒本领', handbook: '成长手册', outfitLabel: '服装',
                  kind: { play: '动作', walk: '走路', expr: '表情', voice: '声音', look: '目光跟随', outfit: '服装', info: '还不会', standIn: '先凑合' },
                  tryIt: '点一下试试', walkTry: '去走一圈', lookOnce: '看一眼', listenOnce: '听一下', outfitGo: '回助手那里换', teachGo: '回助手那里教', standInNote: '先凑合的版本',
                  performing: '正在表演…', ackOk: '做完了', ackBusy: '等它做完', ackSleeping: '它睡着了', ackNoWalk: '还没学会侧身走路', ackCooldown: '刚做过，歇一会儿', ackUnknown: '它还不会这个', ackRejected: '这次没做成', ackTimeout: '没有回应，再试一次',
                  switchOn: '开', switchOff: '关', lookSwitchHint: '跟着鼠标转头',
-                 emptyLearned: (n) => `${n} 还在学习新本领`, emptyExpr: (n) => `${n} 还没有专门的表情`, emptyNotYet: (n) => `${n} 把能学的都学会了`,
+                 emptyLearned: '{n} 还在学习新本领', emptyExpr: '{n} 还没有专门的表情', emptyNotYet: '{n} 把能学的都学会了',
                  names: { shake: '摇头', groom: '打理', bounce: '弹一下', wiggle: '扭一扭', tilt: '歪头', shiver: '抖一抖', yawn: '打哈欠', settle: '坐稳', stretch: '伸懒腰', eat: '吃饭', drink: '喝水', sleep: '睡觉' } },
         candidates: { wave: '挥手', nod: '点头', jump: '蹦一下', dance: '跳舞', angry: '生气', happy: '开心', think: '思考', drag: '被抓起来', walk: '走路', pounce: '扑', stretch: '伸懒腰（真的）', roll: '打滚', heart: '比心' },
       },
-      teach: { menu: '教我新东西 / 实现你的想法…', done: (f) => `已放到桌面：${f}。把它拖进助手对话，说你想让我学什么——菜单里没有的也行。`, guide: '使用说明', guideMissing: '说明文件不在这个宠物包里',
+      teach: { menu: '教我新东西 / 实现你的想法…', done: '已放到桌面：{f}。把它拖进助手对话，说你想让我学什么——菜单里没有的也行。', guide: '使用说明', guideMissing: '说明文件不在这个宠物包里',
                empty: '去教我一个你自己想的动作…', learned: '我学会新东西啦！下次还可以继续教我。',
                hints: ['你想象中的动作，我也可以慢慢学会。', '想让我跳舞、比心，还是做个你自己发明的动作？', '菜单里没有也没关系，告诉助手你想让我做什么。'] },
       pending: { labels: { eat: '吃饭', drink: '喝水', sleep: '睡觉' },
-                 all: (l) => `我还没学会${l.join('、')}。想教我的话，右键「教我新东西」带我回去继续。`,
-                 one: (x) => `这个${x}是我先凑合的——回去教我真正的${x}吧。` },
+                 all: '我还没学会{l}。想教我的话，右键「教我新东西」带我回去继续。',
+                 one: '这个{x}是我先凑合的——回去教我真正的{x}吧。' },
       inter: { whipReact: '哎呀！', clickTea: '再点我就请你喝奶茶——接住！', strokeLove: '被你摸得心花怒放～', garden: '花园又多了一朵！', flowerBud: '咦，头上长了个花苞？', flowerBloom: '开花了！继续打字它会长大。', flowerPick: '摘下来啦，放旁边收着。' },
       menu2: { follow: '跟着鼠标走', unfollow: '别跟了', come: '过来', hide: '躲起来', perch: '坐到窗口上', unperch: '别坐窗口了', lookFollow: '目光跟随', lookOn: '目光跟随 ✓', lookOff: '目光跟随 ✗' },
     },
     'en': {
-      hint: 'Drag me · click me · hold and stroke me · 🐾 top-left to care for me · right-click for menu\nWant me to learn more? Right-click → “Teach me something new” and tell the assistant your idea',
+      _dir: 'ltr', listSep: ', ',
+      hint: 'Drag me · click me · sweep the cursor over me · 🐾 top-left to care for me · right-click for menu\nWant me to learn more? Right-click → “Teach me something new” and tell the assistant your idea',
       noPet: 'No pet yet: import a pet package from the Kapi tray / menu-bar icon',
       noPetHelp: 'No pet found.\n\nIf you unzipped a full delivery (it contains Kapi and a pets folder):\n- The pet is inside the pets folder, not a separate file — there is no .petpack to look for\n- Keep Kapi and pets together in the same place and double-click Kapi there; do not pull Kapi out on its own\n\nIf you only have Kapi and were sent a .petpack file separately:\n- Click the Kapi icon in the tray / menu bar -> "Import pet package" and pick it, or just double-click the .petpack\n\n(Meanwhile the pet window will not block your clicks; to close it, use that icon -> Quit.)',
       noPetMoved: 'Also: macOS ran Kapi from a read-only temporary location this time (it does that for unsigned apps opened straight from Downloads), so it cannot see the pets folder next to it. Move the whole folder to Applications or the Desktop and open it from there.',
       needNewer: 'This pet package needs a newer Kapi. Please download again.',
-      notebookFail: (why) => `The notebook did not open (${why}) and was closed; the pet is fine. Try again, or use tray → Diagnose and send the log`,
-      imported: (n, v) => `Imported “${n}” v${v}`, importFail: 'Import failed: ', onlyOne: 'Only one pet here', switched: (n) => `Switched to “${n}”`,
+      notebookFail: 'The notebook did not open ({why}) and was closed; the pet is fine. Try again, or use tray → Diagnose and send the log',
+      imported: 'Imported “{n}” v{v}', importFail: 'Import failed: ', onlyOne: 'Only one pet here', switched: 'Switched to “{n}”',
       exported: 'Exported. Send it to your assistant to keep teaching.', exportFail: 'Export failed: ',
       reminder: 'Reminder',
-      menu: { care: (n) => `Take care of ${n} (feed / water / sleep)`, actions: 'Actions', size: 'Size', mute: 'Mute', onTop: 'Always on top',
+      tray: { show: 'Show / Hide', notebook: 'Its notebook', typing: 'Enable typing reactions (needs Accessibility)', import: 'Import pet package (.petpack)…',
+              switch: 'Switch pet', export: 'Export current pet…', recover: 'Recover interaction (if clicks stop working)', diagnose: 'Diagnose (click this, then send the log)', quit: 'Quit' },
+      menu: { care: 'Take care of {n} (feed / water / sleep)', actions: 'Actions', size: 'Size', mute: 'Mute', onTop: 'Always on top',
               import: 'Import pet package…', switch: 'Switch pet', export: 'Export current pet…', hide: 'Hide', quit: 'Quit' },
-      care: { feed: 'Feed', water: 'Water', pet: 'Pet', sleep: 'Sleep', wake: 'Wake up', hunger: 'Food', thirst: 'Water', energy: 'Energy', mood: 'Mood', xp: 'XP', streak: (d) => `${d}-day streak`,
-              cooldown: (label, m) => `Just did that. Try again in ${m} min.`, enough: 'Okay, okay, enough.', tickets: (o, h) => `🎫 Outfit tickets ${o} · Holiday ${h} (redeem with your assistant)`, close: '×',
-              firstToday: (xp, d) => `First care today +${xp} XP · ${d}-day streak`, levelUp: (lv) => `Level ${lv}!`, got: ' Unlocked: ', cooling: 'cooling down',
+      care: { feed: 'Feed', water: 'Water', pet: 'Pet', sleep: 'Sleep', wake: 'Wake up', hunger: 'Food', thirst: 'Water', energy: 'Energy', mood: 'Mood', xp: 'XP', streak: '{d}-day streak',
+              cooldown: 'Just did that. Try again in {m} min.', enough: 'Okay, okay, enough.', tickets: '🎫 Outfit tickets {o} · Holiday {h} (redeem with your assistant)', close: '×',
+              firstToday: 'First care today +{xp} XP · {d}-day streak', levelUp: 'Level {lv}!', got: ' Unlocked: ', cooling: 'cooling down',
               fallback: { fed: 'Yum.', watered: 'Gulp.', pet: 'Mm… nice.', sleep: 'Zzz', wakeUp: 'Slept well.', wokenUp: '…who woke me?', hungry: '…kinda hungry.', thirsty: 'Thirsty.', tired: 'Sleepy…', lonely: "You haven't talked to me in a while." },
               titles: ['Newcomer', 'Regular', 'Acquaintance', 'Good friend', 'Caretaker', 'Buddy', 'Family', 'Old friend', 'Confidant', 'Soulmate'],
               rewards: { 2: 'New lines: clingy', 3: 'Outfit ticket ×1', 4: 'New lines: rambling', 5: 'Outfit ticket ×1', 6: 'Growth: teen (size +10%)', 7: 'Outfit ticket ×1', 8: 'New lines: old friend', 9: 'Holiday skin ticket ×1', 10: 'Growth: adult (size +20%)' } },
       beh: { follow: 'Right behind you.', hide: "I'll hide for a bit.", coming: 'Coming.', perch: 'Nice view up here.', perchHint: 'Click the window you want me to sit on.', typingLong: "That's a lot of typing. Break?", lowBattery: 'Battery is at {p}%!', greet: 'Hey, {name}.', thrown: '…did you just throw me?', cling: 'Hanging on!', climbBack: 'Almost fell.', dizzy: 'I… the room is spinning…', gift: "For me? …I can't eat that.", giftHover: "What's that?" },
       wardrobe: { menu: 'Wardrobe', default: 'Original' },
       panelCmd: { busy: 'Let it finish this one first.', sleeping: 'It is asleep — wake it first.', noWalk: 'It cannot really walk yet (no valid walk cycle).', unknown: 'It does not know that move yet.' },
-      src: { olderBundle: (b, have) => `This folder's copy is v${b}; a newer v${have} is already installed, so v${have} is shown.` },
+      src: { olderBundle: "This folder's copy is v{b}; a newer v{have} is already installed, so v{have} is shown." },
       perm: { hint: 'Want it to nod along as you type, grow the flower and dodge the Ctrl whip? Tray → "Enable typing reactions" and grant Accessibility once; everything else works without it.', howTo: 'Turn on Kapi under System Settings → Privacy & Security → Accessibility; it takes effect when you come back, no restart.', on: 'Typing reactions are on.' },
       growth: {
         menu: 'Its notebook', play: 'Play a round (catch the light)',
         wish: { stroke: 'be petted {n} times', click: 'be poked {n} times', type: 'watch you type {n} characters', feed: 'eat {n} times', water: 'drink {n} times', sleep: 'a good nap', flower: 'grow a flower', game: 'play one round of catch', gift: 'receive something (drop a file on it)', notebook: 'you read its notebook', learn: 'learn a new move (take it back to the assistant)' },
         wishDone: { stroke: '…one wish came true today.', click: 'Poked enough. Satisfied.', type: 'You wrote a lot today. I watched.', feed: 'Full. Wish granted.', water: 'Enough water.', sleep: 'Slept well.', flower: 'It bloomed!', game: 'That was fun.', gift: 'Got it, thanks.', notebook: 'You read my notebook…', learn: 'I learned something new! Best thing today.' },
-        wishAll: 'All of today\'s wishes came true!', coins: 'hearts', coinsHint: 'Hearts add up; they will buy things later',
+        wishAll: "All of today's wishes came true!", coins: 'hearts', coinsHint: 'Hearts add up; they will buy things later',
         find: { leaf: 'a leaf', pebble: 'a pebble', cap: 'a bottle cap', plane: 'a paper plane', yarn: 'a ball of yarn', wrapper: 'a candy wrapper', feather: 'a feather', key: 'an old key', shell: 'a shell', ribbon: 'a ribbon', clip: 'a paper clip', cookie: 'half a cookie', plush: 'a tiny plush', coin: 'a coin', acorn: 'an acorn', stub: 'a ticket stub', sock: 'one sock', star: 'a star' },
-        findSay: (name) => `While you were gone I found ${name}. For you.`, findNew: '(new!)', findPage: 'A full page of finds — I want a new look. Outfit ticket +1, take me back to the assistant.',
+        findSay: 'While you were gone I found {name}. For you.', findNew: '(new!)', findPage: 'A full page of finds — I want a new look. Outfit ticket +1, take me back to the assistant.',
         sulkStart: '…hmph.', sulkIgnore: ['…', 'Not talking to you.', 'Hmph.'], sulkEnd: '…fine. Forgiven.',
-        jType: (n) => `You typed ${n} characters today.`, jStroke: (n) => `Petted me ${n} times.`, jCare: (n) => `Looked after me ${n} times.`, jFind: (n) => `I brought back ${n} thing(s).`, jGame: (b) => `Catch high score ${b}.`, jWhip: (n) => `Got hit ${n} times. Noted.`,
+        jType: 'You typed {n} characters today.', jStroke: 'Petted me {n} times.', jCare: 'Looked after me {n} times.', jFind: 'I brought back {n} thing(s).', jGame: 'Catch high score {b}.', jWhip: 'Got hit {n} times. Noted.',
         jQuiet: 'A quiet day.', jHappy: 'A good day.', jOk: 'It was okay.', jSad: 'A little lonely.',
         chapter: { c1: 'Just home', c2: 'Settling in', c3: 'Old friends', c4: 'In sync', c5: 'Family', c6: 'Growing up', c7: 'Routine', c8: 'Inseparable', c9: 'Partners', c10: 'Grown' },
         task: { newAction: 'teach it a new move (at the assistant)', newAction2: 'teach it two more moves (at the assistant)', outfit: 'dress it up (an outfit ticket, at the assistant)', care3: 'teach eating, drinking and sleeping for real (at the assistant)' },
         taskDone: 'done', taskTodo: 'not yet',
-        game: { start: (s) => `Catch the light! Click the dot, ${s} seconds.`, over: (n, best) => `${n} point${n === 1 ? '' : 's'}${n >= best && n > 0 ? ', new record!' : ''}`, best: (b) => `best ${b}`, wantPounce: 'High enough — I want to learn a pounce. Take me back to the assistant.', wantPeck: 'High enough — I want to learn to peck at it. Take me back to the assistant.', wantTap: 'High enough — I want to learn to tap the light. Take me back to the assistant.' },
+        game: { start: 'Catch the light! Click the dot, {s} seconds.', overOne: '{n} point', overMany: '{n} points', newRecord: ', new record!', best: 'best {b}', wantPounce: 'High enough — I want to learn a pounce. Take me back to the assistant.', wantPeck: 'High enough — I want to learn to peck at it. Take me back to the assistant.', wantTap: 'High enough — I want to learn to tap the light. Take me back to the assistant.' },
         panel: { title: 'Notebook', tabs: { skills: 'What I know', wishes: 'Today', finds: 'Finds', journal: 'Diary', chapters: 'Chapters' },
                  learned: 'Moves I learned', standIn: 'Making do for now (teach me at the assistant)', notYet: 'Not yet (tell the assistant "teach it to…")', expr: 'Expressions', look: 'Head turning', voice: 'Voice',
-                 lookRing: '48-frame video look', lookFrames: '8 directions', lookNone: 'cannot turn yet', voiceTts: 'recorded voice', voiceBabble: 'babble', voiceSpecies: (s) => `real calls (${s})`, voiceNone: 'no voice',
-                 wishesToday: 'Today\'s wishes', platformWish: '(needs the assistant)', noFinds: 'Nothing found yet. Step away for a while; it may bring something back.', page: (n) => `page ${n}`, empty: 'none yet', journalNote: 'It writes one line about yesterday by itself, every day. It keeps the last 30 days, on your own computer only.', journalEmpty: 'Today is day one. Open it tomorrow and today will be written down.', bestCatch: (b) => `catch best ${b}`, games: (n) => `${n} rounds`,
+                 lookRing: '48-frame video look', lookFrames: '8 directions', lookNone: 'cannot turn yet', voiceTts: 'recorded voice', voiceBabble: 'babble', voiceSpecies: 'real calls ({s})', voiceNone: 'no voice',
+                 wishesToday: "Today's wishes", platformWish: '(needs the assistant)', noFinds: 'Nothing found yet. Step away for a while; it may bring something back.', page: 'page {n}', empty: 'none yet', journalNote: 'It writes one line about yesterday by itself, every day. It keeps the last 30 days, on your own computer only.', journalEmpty: 'Today is day one. Open it tomorrow and today will be written down.', bestCatch: 'catch best {b}', games: '{n} rounds',
                  hint: 'To teach it something, say the "at the assistant" line on this page to the assistant as it is.', refreshNote: 'refreshes every 2 s', stats: 'Stats', statStroke: 'petted', statClick: 'poked', statType: 'typed', statFeed: 'meals', statWater: 'drinks', statWhip: 'hits', statGift: 'gifts', statCatch: 'catch best',
-                 // 0.9.4 skill cards: the notebook asks the pet to do things
                  recent: 'Latest move', recentNone: 'still collecting moves', handbook: 'Growth handbook', outfitLabel: 'Outfit',
                  kind: { play: 'Move', walk: 'Walk', expr: 'Expression', voice: 'Voice', look: 'Gaze', outfit: 'Outfit', info: 'Not yet', standIn: 'Stand-in' },
                  tryIt: 'Tap to try', walkTry: 'Take a stroll', lookOnce: 'Show it', listenOnce: 'Hear it', outfitGo: 'Change at the assistant', teachGo: 'Teach at the assistant', standInNote: 'improvised version',
                  performing: 'Performing…', ackOk: 'Done', ackBusy: 'Let it finish first', ackSleeping: 'It is asleep', ackNoWalk: 'No side-walk cycle yet', ackCooldown: 'Just did that, give it a moment', ackUnknown: 'It does not know this one', ackRejected: 'Did not work this time', ackTimeout: 'No reply, try again',
                  switchOn: 'On', switchOff: 'Off', lookSwitchHint: 'turns its head toward the mouse',
-                 emptyLearned: (n) => `${n} is still learning new moves`, emptyExpr: (n) => `${n} has no special expressions yet`, emptyNotYet: (n) => `${n} has learned everything on the list`,
+                 emptyLearned: '{n} is still learning new moves', emptyExpr: '{n} has no special expressions yet', emptyNotYet: '{n} has learned everything on the list',
                  names: { shake: 'shake head', groom: 'groom', bounce: 'bounce', wiggle: 'wiggle', tilt: 'tilt', shiver: 'shiver', yawn: 'yawn', settle: 'settle', stretch: 'stretch', eat: 'eat', drink: 'drink', sleep: 'sleep' } },
         candidates: { wave: 'wave', nod: 'nod', jump: 'hop', dance: 'dance', angry: 'angry', happy: 'happy', think: 'think', drag: 'held up', walk: 'walk', pounce: 'pounce', stretch: 'a real stretch', roll: 'roll over', heart: 'finger heart' },
       },
-      teach: { menu: 'Teach me something new / make your idea real…', done: (f) => `Saved to your Desktop: ${f}. Drop it into the assistant chat and say what I should learn — anything, not just the menu.`, guide: 'How to use', guideMissing: 'No guide file in this pet package',
+      teach: { menu: 'Teach me something new / make your idea real…', done: 'Saved to your Desktop: {f}. Drop it into the assistant chat and say what I should learn — anything, not just the menu.', guide: 'How to use', guideMissing: 'No guide file in this pet package',
                empty: 'Teach me a move you made up…', learned: 'I learned something new! You can keep teaching me.',
                hints: ['Any move you can imagine, I can learn.', 'Dance, finger-heart, or something you invent?', "Not on the menu? Just tell the assistant what you want me to do."] },
       pending: { labels: { eat: 'eating', drink: 'drinking', sleep: 'sleeping' },
-                 all: (l) => `I haven't learned ${l.join(', ')} yet. Right-click → "Teach me something new" to take me back and finish.`,
-                 one: (x) => `That ${x} was me improvising — take me back and teach me the real one.` },
+                 all: "I haven't learned {l} yet. Right-click → \"Teach me something new\" to take me back and finish.",
+                 one: 'That {x} was me improvising — take me back and teach me the real one.' },
       inter: { whipReact: 'Ouch!', clickTea: 'Keep poking and I throw bubble tea — catch!', strokeLove: 'All these pets are going to my head~', garden: 'One more for the garden!', flowerBud: 'Huh, a bud on my head?', flowerBloom: 'It bloomed! Keep typing and it grows.', flowerPick: 'Picked it — keeping it next to me.' },
       menu2: { follow: 'Follow the mouse', unfollow: 'Stop following', come: 'Come here', hide: 'Hide', perch: 'Sit on the window', unperch: 'Get off the window', lookFollow: 'Follow my gaze', lookOn: 'Follow my gaze ✓', lookOff: 'Follow my gaze ✗' },
     },
   };
-  function pick(lang) {
-    const l = String(lang || (typeof navigator !== 'undefined' ? navigator.language : 'en') || 'en').toLowerCase();
-    if (l.startsWith('zh')) return STRINGS.zh;
-    return STRINGS.en;
+
+  // Template entries that call sites invoke as functions: path -> positional argument names. pick() turns each of
+  // these into a function so `T.imported(name, ver)` keeps working exactly as before.
+  const TEMPLATE_FNS = {
+    'notebookFail': ['why'], 'imported': ['n', 'v'], 'switched': ['n'],
+    'menu.care': ['n'],
+    'care.streak': ['d'], 'care.cooldown': ['label', 'm'], 'care.tickets': ['o', 'h'], 'care.firstToday': ['xp', 'd'], 'care.levelUp': ['lv'],
+    'src.olderBundle': ['b', 'have'],
+    'growth.findSay': ['name'],
+    'growth.jType': ['n'], 'growth.jStroke': ['n'], 'growth.jCare': ['n'], 'growth.jFind': ['n'], 'growth.jGame': ['b'], 'growth.jWhip': ['n'],
+    'growth.game.start': ['s'], 'growth.game.best': ['b'],
+    'growth.panel.voiceSpecies': ['s'], 'growth.panel.page': ['n'], 'growth.panel.bestCatch': ['b'], 'growth.panel.games': ['n'],
+    'growth.panel.emptyLearned': ['n'], 'growth.panel.emptyExpr': ['n'], 'growth.panel.emptyNotYet': ['n'],
+    'teach.done': ['f'], 'pending.one': ['x'],
+  };
+  // The two entries that need real logic rather than substitution. Their PIECES live in the data above, so a pack
+  // never has to express a plural rule or a conditional — it only translates strings.
+  const LOGIC_FNS = {
+    'growth.game.over': (T) => (n, best) =>
+      fmt(n === 1 ? get(T, 'growth.game.overOne') : get(T, 'growth.game.overMany'), { n }) +
+      (n >= best && n > 0 ? (get(T, 'growth.game.newRecord') || '') : ''),
+    'pending.all': (T) => (list) => fmt(get(T, 'pending.all_'), { l: (list || []).join(T.listSep || ', ') }),
+  };
+  const RTL = ['ar', 'he', 'fa', 'ur'];
+
+  function fmt(tpl, vars) {
+    return String(tpl == null ? '' : tpl).replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
   }
-  global.I18N = { strings: STRINGS, pick };
+  function get(o, path) { return path.split('.').reduce((v, k) => (v == null ? v : v[k]), o); }
+  function set(o, path, val) {
+    const ks = path.split('.'); const last = ks.pop();
+    const parent = ks.reduce((v, k) => (v == null ? v : v[k]), o);
+    if (parent) parent[last] = val;
+  }
+  function clone(v) {
+    if (Array.isArray(v)) return v.map(clone);
+    if (v && typeof v === 'object') { const o = {}; for (const k in v) o[k] = clone(v[k]); return o; }
+    return v;
+  }
+  // a pack overrides key by key; anything it does not mention keeps the built-in text
+  function merge(base, over) {
+    if (!over || typeof over !== 'object') return base;
+    for (const k in over) {
+      const v = over[k];
+      if (v && typeof v === 'object' && !Array.isArray(v) && base[k] && typeof base[k] === 'object' && !Array.isArray(base[k])) merge(base[k], v);
+      else if (v !== undefined && v !== null && v !== '') base[k] = clone(v);
+    }
+    return base;
+  }
+
+  // lang -> which BUILT-IN set to start from. Traditional Chinese starts from Simplified so an untranslated key
+  // falls back to Chinese rather than English; every other locale starts from English.
+  function baseFor(lang) {
+    const l = String(lang || '').toLowerCase();
+    return l.startsWith('zh') ? 'zh' : 'en';
+  }
+
+  /**
+   * @param lang  BCP-47 from persona.json.language (or navigator.language)
+   * @param pack  parsed pets/<id>/ui.json, or null — merged over the built-in set
+   */
+  function pick(lang, pack) {
+    const l = String(lang || (typeof navigator !== 'undefined' ? navigator.language : 'en') || 'en').toLowerCase();
+    const T = clone(STRINGS[baseFor(l)]);
+    if (pack) merge(T, pack);
+    T._lang = l;
+    T._dir = RTL.some((p) => l === p || l.startsWith(p + '-')) ? 'rtl' : 'ltr';
+    // pending.all is both a template and a function name; keep the raw template reachable for the logic fn
+    T.pending.all_ = T.pending.all;
+    for (const path in TEMPLATE_FNS) {
+      const tpl = get(T, path);
+      if (typeof tpl !== 'string') continue;
+      const args = TEMPLATE_FNS[path];
+      set(T, path, (...vals) => fmt(tpl, Object.fromEntries(args.map((a, i) => [a, vals[i]]))));
+    }
+    for (const path in LOGIC_FNS) set(T, path, LOGIC_FNS[path](T));
+    return T;
+  }
+
+  global.I18N = { strings: STRINGS, pick, fmt, TEMPLATE_FNS, LOGIC_FNS, RTL };
 })(typeof window !== 'undefined' ? window : globalThis);
